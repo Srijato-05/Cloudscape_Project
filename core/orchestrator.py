@@ -1,159 +1,284 @@
+import time
+import json
+import gzip
 import asyncio
-import importlib
 import logging
-from concurrent.futures import ThreadPoolExecutor
-from typing import List, Dict, Any, Type
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
-from core.config import settings, tenants, TenantConfig
-from core.processor.ingestor import GraphIngestor
-from core.correlation.trust_resolver import EnterpriseCorrelationEngine
+from core.config import config, TenantConfig
+from engines.aws_engine import AWSEngine
+from engines.azure_engine import AzureEngine
+from engines.base_engine import BaseDiscoveryEngine
 
-# Configure Enterprise-Grade Logging
-logging.basicConfig(
-    level=getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO),
-    format="%(asctime)s | %(levelname)-8s | %(name)-20s | %(message)s"
-)
-logger = logging.getLogger("Cloudscape.Orchestrator")
+# Standard Logic Engines (v4.0)
+from core.logic.risk_scorer import risk_scorer
+from core.logic.policy_engine import policy_resolver
+from core.processor.ingestor import graph_ingestor
+
+# Advanced Aether Engines (v5.0)
+from simulation.state_factory import state_factory
+from engines.hybrid_bridge import hybrid_bridge
+from core.logic.identity_fabric import identity_fabric
+from core.logic.attack_path import attack_path_engine
 
 # ==============================================================================
-# PROJECT CLOUDSCAPE: INTEGRATED MULTI-TENANT ORCHESTRATOR (FINAL)
+# ENTERPRISE MASTER ORCHESTRATOR (NEXUS 5.0 AETHER)
 # ==============================================================================
 
-class DiscoveryEngineError(Exception):
-    """Custom exception for Discovery Engine failures."""
-    pass
-
-class DiscoveryOrchestrator:
+class CloudscapeOrchestrator:
     """
-    Advanced event-driven orchestrator. Implements a multi-threaded producer
-    mesh and a transactional consumer to bridge Cloud APIs to Neo4j.
+    The Central Nervous System of Project Cloudscape.
+    Manages multi-tenant live discovery, synthetic state generation, hybrid merging, 
+    cross-cloud identity resolution, and heuristic attack path analysis.
     """
 
-    def __init__(self, tenant_list: List[TenantConfig]):
-        self.tenants = tenant_list
-        # The Queue buffers data between the Crawlers (Producers) and Ingestor (Consumer)
-        self.ingestion_queue: asyncio.Queue = asyncio.Queue()
-        self.active_tasks = 0
-
-    def _dynamically_load_engine(self, provider: str) -> Type:
-        """DYNAMIC FACTORY: Resolves engine classes at runtime based on provider string."""
-        engine_map = {
-            "aws": "engines.aws_engine.AWSEngine",
-            "azure": "engines.azure_engine.AzureEngine"
-        }
-
-        if provider not in engine_map:
-            raise ValueError(f"Unsupported cloud provider: {provider}")
-
-        module_path, class_name = engine_map[provider].rsplit(".", 1)
+    def __init__(self):
+        self.logger = logging.getLogger("Cloudscape.Core.Orchestrator")
         
-        try:
-            module = importlib.import_module(module_path)
-            engine_class = getattr(module, class_name)
-            return engine_class
-        except (ImportError, AttributeError) as e:
-            logger.error(f"Failed to dynamically load engine for {provider}: {e}")
-            raise DiscoveryEngineError(f"Engine resolution failed for {provider}")
-
-    async def _scan_tenant_task(self, tenant: TenantConfig) -> None:
-        """THE PRODUCER: Executes the cloud API crawl and queues the forensic state."""
-        logger.info(f"Initiating Discovery Mesh for Tenant: {tenant.name} [{tenant.id}]")
+        # Concurrency Controls
+        self.max_concurrent_tenants = config.settings.orchestrator.max_concurrent_tenants
+        self.semaphore = asyncio.Semaphore(self.max_concurrent_tenants)
         
-        try:
-            # Resolve engine and run in separate thread to keep asyncio loop responsive
-            engine_class = self._dynamically_load_engine(tenant.provider)
-            engine_instance = engine_class(tenant)
+        # Forensics setup
+        self.forensics_dir = Path(config.settings.forensics.output_directory)
+        self.generate_evidence = config.settings.forensics.generate_json_evidence
+        self.compress_evidence = config.settings.forensics.compress_reports
+        
+        if self.generate_evidence:
+            self.forensics_dir.mkdir(parents=True, exist_ok=True)
 
-            loop = asyncio.get_running_loop()
-            with ThreadPoolExecutor(max_workers=5) as pool:
-                raw_state: Dict[str, Any] = await loop.run_in_executor(
-                    pool, engine_instance.run_full_discovery
+    def _instantiate_engine(self, tenant: TenantConfig) -> BaseDiscoveryEngine:
+        """Dynamically provisions the correct Cloud Engine."""
+        provider = tenant.provider.lower()
+        if provider == "aws":
+            return AWSEngine(tenant)
+        elif provider == "azure":
+            return AzureEngine(tenant)
+        else:
+            raise NotImplementedError(f"Provider '{provider}' is not supported.")
+
+    async def _fetch_live_telemetry(self, tenant: TenantConfig) -> List[Dict[str, Any]]:
+        """
+        Phase 1: Asynchronously crawls a specific tenant for Live API data.
+        """
+        async with self.semaphore:
+            engine = None
+            try:
+                self.logger.info(f"[{tenant.id}] Starting Live Telemetry Discovery...")
+                engine = self._instantiate_engine(tenant)
+                
+                is_connected = await engine.test_connection()
+                if not is_connected:
+                    self.logger.warning(f"[{tenant.id}] Live API Connection Failed. Relying solely on Synthetic State.")
+                    return []
+
+                raw_payloads = await engine.run_full_discovery()
+                self.logger.info(f"[{tenant.id}] Discovered {len(raw_payloads)} live resources.")
+                return raw_payloads
+
+            except Exception as e:
+                self.logger.error(f"[{tenant.id}] Live Discovery Crashed: {e}", exc_info=True)
+                return []
+            finally:
+                if engine:
+                    await engine.cleanup()
+
+    def _enrich_and_resolve_policies(self, payloads: List[Dict[str, Any]], tenants: List[TenantConfig]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """
+        Phase 2: Applies Risk Math and mathematically resolves IAM/RBAC JSON.
+        Returns the enriched payloads and a flat list of all generated policy edges.
+        """
+        self.logger.info("Commencing Global Security Enrichment Phase (Risk Math & Policy Resolution)...")
+        
+        tenant_map = {t.id: t for t in tenants}
+        all_policy_edges = []
+
+        for payload in payloads:
+            metadata = payload.get("metadata", {})
+            properties = payload.get("properties", {})
+            tenant_id = metadata.get("tenant_id")
+            resource_type = metadata.get("resource_type", "")
+            source_arn = metadata.get("arn", "")
+
+            # 1. Apply Blast Radius Scoring
+            tenant = tenant_map.get(tenant_id)
+            if tenant:
+                metadata["baseline_risk_score"] = risk_scorer.calculate_node_risk(payload, tenant)
+
+            # 2. Resolve IAM/Entra Policies into Graph Edges
+            secondary_meta = properties.get("_secondary_metadata", {})
+            raw_policy = None
+            
+            if resource_type in ["Role", "User", "Group", "Policy"]:
+                raw_policy = secondary_meta.get("get_policy", {})
+            elif resource_type in ["Bucket", "Key", "Secret"]:
+                raw_policy = secondary_meta.get("get_bucket_policy", secondary_meta.get("get_key_policy", secondary_meta.get("get_resource_policy", {})))
+
+            if raw_policy and isinstance(raw_policy, dict) and not raw_policy.get("error"):
+                resolved_edges = policy_resolver.resolve_policy_to_edges(
+                    source_arn=source_arn, 
+                    policy_document=raw_policy
                 )
+                if resolved_edges:
+                    # Store edges directly on the node for the ingestor, and collect globally for Dijkstra
+                    properties.setdefault("_resolved_policy_edges", []).extend(resolved_edges)
+                    all_policy_edges.extend(resolved_edges)
 
-            # Bundle data with metadata for the correlation logic
-            payload = {
-                "tenant_metadata": tenant.model_dump(),
-                "raw_state": raw_state
-            }
+        self.logger.info(f"Enrichment Complete. Generated {len(all_policy_edges)} explicit policy edges.")
+        return payloads, all_policy_edges
 
-            await self.ingestion_queue.put(payload)
-            logger.info(f"Scan complete for {tenant.name}. Data queued for Graph Ingestion.")
+    async def _generate_forensic_evidence(self, payloads: List[Dict[str, Any]]) -> None:
+        """Saves a point-in-time state of the unified cloud matrix."""
+        if not self.generate_evidence or not payloads:
+            return
+
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+        filename = f"aether_global_audit_{timestamp}.json"
+        
+        try:
+            loop = asyncio.get_running_loop()
+            
+            def write_file():
+                report_data = {
+                    "audit_metadata": {
+                        "scope": "GLOBAL_MATRIX",
+                        "timestamp": timestamp,
+                        "resource_count": len(payloads),
+                        "framework_version": config.settings.app_metadata.version
+                    },
+                    "resources": payloads
+                }
+                
+                if self.compress_evidence:
+                    filepath = self.forensics_dir / f"{filename}.gz"
+                    with gzip.open(filepath, 'wt', encoding="utf-8") as f:
+                        json.dump(report_data, f, separators=(',', ':'))
+                else:
+                    filepath = self.forensics_dir / filename
+                    with open(filepath, 'w', encoding="utf-8") as f:
+                        json.dump(report_data, f, indent=2)
+                
+                return filepath
+
+            saved_path = await loop.run_in_executor(None, write_file)
+            self.logger.debug(f"Global Forensic Evidence locked at {saved_path}")
 
         except Exception as e:
-            logger.error(f"Discovery failed for Tenant {tenant.name} [{tenant.id}]: {str(e)}")
-        finally:
-            self.active_tasks -= 1
+            self.logger.error(f"Failed to generate global forensic evidence: {e}")
 
-    async def _graph_ingestor_consumer(self) -> None:
+    def _distribute_global_edges(self, payloads: List[Dict[str, Any]], global_edges: List[Dict[str, Any]]) -> None:
         """
-        THE CONSUMER: Translates raw JSON into Correlated Graph Edges.
-        Includes graceful handling for asyncio cancellation.
+        Takes the synthetic edges generated by Identity Fabric and Attack Path engines,
+        and injects them back into their respective source node's URM payloads.
+        This allows the existing 'transformer.py' to ingest them effortlessly.
         """
-        logger.info("Graph Ingestor Consumer started. Waiting for payloads...")
-        
-        # Initialize the heavy-duty components
-        ingestor = GraphIngestor()
-        correlator = EnterpriseCorrelationEngine(self.tenants)
-        
-        while True:
-            try:
-                # Await a payload from the queue
-                payload = await self.ingestion_queue.get()
-                
-                tenant_meta = TenantConfig(**payload['tenant_metadata'])
-                raw_state = payload['raw_state']
-                
-                logger.info(f"Processing Graph State for {tenant_meta.name}...")
+        edge_map = {}
+        for edge in global_edges:
+            src_arn = edge.get("source_arn")
+            if src_arn:
+                edge_map.setdefault(src_arn, []).append(edge)
 
-                # 1. RUN CORRELATION ENGINE (Finding Cross-Account Links)
-                cross_edges = correlator.extract_mesh_edges(tenant_meta, raw_state)
+        for payload in payloads:
+            arn = payload.get("metadata", {}).get("arn")
+            if arn in edge_map:
+                payload.setdefault("properties", {}).setdefault("_resolved_policy_edges", []).extend(edge_map[arn])
 
-                # 2. EXECUTE GRAPH INGESTION (Neo4j Write)
-                ingestor.ingest_tenant_state(tenant_meta, raw_state, cross_edges)
-                
-                # 3. Mark the task as done successfully
-                self.ingestion_queue.task_done()
-                logger.info(f"Successfully committed {tenant_meta.name} to Enterprise Graph.")
-                
-            except asyncio.CancelledError:
-                # Handle the shutdown signal from execute_mesh_scan
-                logger.debug("Consumer task received shutdown signal.")
-                break
-            except Exception as e:
-                logger.error(f"Ingestion pipeline failure: {e}")
-                # We still mark as done so the queue doesn't hang on failure
-                self.ingestion_queue.task_done()
+    async def execute_global_scan(self) -> None:
+        """
+        The Aether Master Pipeline.
+        Executes Live Discovery, Synthetic Generation, Hybrid Merging, 
+        Global Pathfinding Math, and Distributed Database Ingestion.
+        """
+        global_start = time.monotonic()
+        tenants = config.tenants
 
-    async def execute_mesh_scan(self):
-        """Main entry point. Manages the lifecycle of producers and consumers."""
-        logger.info(f"Starting Multi-Tenant Orchestrator. Targets: {len(self.tenants)}")
-        
-        self.active_tasks = len(self.tenants)
-        
-        # Start background consumer
-        consumer_task = asyncio.create_task(self._graph_ingestor_consumer())
+        self.logger.info("="*80)
+        self.logger.info(f" IGNITING NEXUS 5.0 AETHER PIPELINE ({len(tenants)} Tenants)")
+        self.logger.info("="*80)
 
-        # Launch parallel scans
-        scan_tasks = [
-            asyncio.create_task(self._scan_tenant_task(tenant)) 
-            for tenant in self.tenants
-        ]
+        if not tenants:
+            self.logger.warning("No tenants defined in configuration. Exiting.")
+            return
 
-        # Wait for all producers to finish their API crawls
-        await asyncio.gather(*scan_tasks)
-
-        # Wait for the consumer to finish processing all queued items
-        await self.ingestion_queue.join()
-
-        # Shutdown consumer gracefully
-        consumer_task.cancel()
         try:
-            await consumer_task
-        except asyncio.CancelledError:
-            pass
-            
-        logger.info("Enterprise Mesh Discovery and Graph Correlation Complete.")
+            # Step 0: Ensure Neo4j schema indexes are present
+            await graph_ingestor.setup_schema()
 
-if __name__ == "__main__":
-    orchestrator = DiscoveryOrchestrator(tenants)
-    asyncio.run(orchestrator.execute_mesh_scan())
+            # Step 1: Concurrent Live Telemetry Fetching
+            live_tasks = [self._fetch_live_telemetry(tenant) for tenant in tenants]
+            live_results = await asyncio.gather(*live_tasks, return_exceptions=True)
+            
+            flat_live_payloads = []
+            for res in live_results:
+                if isinstance(res, list):
+                    flat_live_payloads.extend(res)
+
+            # Step 2: Generate the Synthetic Enterprise Universe
+            synthetic_payloads = state_factory.generate_universe(tenants)
+
+            # Step 3: The Hybrid Merge (Resolve Collisions)
+            unified_payloads = hybrid_bridge.merge_payload_streams(flat_live_payloads, synthetic_payloads)
+
+            if not unified_payloads:
+                self.logger.warning("No payloads discovered or generated. Exiting global pipeline.")
+                return
+
+            # Step 4: Security Math & IAM Policy Resolution
+            enriched_payloads, policy_edges = self._enrich_and_resolve_policies(unified_payloads, tenants)
+
+            # Step 5: Global Identity Fabric (Cross-Cloud & Shadow Admins)
+            identity_edges = identity_fabric.extract_identity_edges(enriched_payloads)
+            
+            # Combine current known edges for Dijkstra's Pathfinding
+            current_global_edges = policy_edges + identity_edges
+
+            # Step 6: Heuristic Attack Path Discovery (Dijkstra)
+            attack_path_edges = attack_path_engine.calculate_attack_paths(enriched_payloads, current_global_edges)
+
+            # Step 7: Distribute Synthetic Edges back to Source Nodes for standard ingestion
+            self._distribute_global_edges(enriched_payloads, identity_edges + attack_path_edges)
+
+            # Step 8: Generate Forensic Snapshot of the unified matrix
+            await self._generate_forensic_evidence(enriched_payloads)
+
+            # Step 9: Distributed Database Ingestion (Chunked by Tenant for memory safety)
+            self.logger.info("Executing Graph Database Ingestion Phase...")
+            
+            tenant_payload_map = {}
+            for p in enriched_payloads:
+                t_id = p.get("metadata", {}).get("tenant_id", "unknown-tenant")
+                tenant_payload_map.setdefault(t_id, []).append(p)
+
+            for t_id, t_payloads in tenant_payload_map.items():
+                await graph_ingestor.ingest_payloads(t_id, t_payloads)
+
+            # ==================================================================
+            # TELEMETRY & REPORTING
+            # ==================================================================
+            global_duration = round(time.monotonic() - global_start, 2)
+            
+            print("\n" + "="*80)
+            print(" AETHER GLOBAL SCAN COMPLETE ")
+            print("="*80)
+            print(f" Total Live Nodes Discovered  : {len(flat_live_payloads)}")
+            print(f" Total Synthetic Nodes Forged : {len(synthetic_payloads)}")
+            print(f" Total Unified Graph Nodes    : {len(unified_payloads)}")
+            print("-" * 80)
+            print(f" Policy Edges Calculated      : {len(policy_edges)}")
+            print(f" Cross-Cloud Identity Bridges : {len(identity_edges)}")
+            print(f" Critical Attack Paths Found  : {len(attack_path_edges)}")
+            print("-" * 80)
+            print(f" Execution Time               : {global_duration} seconds")
+            print("="*80 + "\n")
+
+        except Exception as e:
+            self.logger.critical(f"Global Scan failed catastrophically: {e}", exc_info=True)
+        finally:
+            await graph_ingestor.close()
+
+# ==============================================================================
+# GLOBAL EXPORT
+# ==============================================================================
+# Instantiated locally in main.py, but structure supports export if needed.

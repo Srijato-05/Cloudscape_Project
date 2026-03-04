@@ -1,193 +1,281 @@
 import json
+import asyncio
 import logging
-from typing import Dict, Any, List
-from neo4j import GraphDatabase, Transaction
-from neo4j.exceptions import ServiceUnavailable
+import traceback
+from typing import Any, Dict, List, Tuple
 
-from core.config import settings, TenantConfig
+from neo4j import AsyncGraphDatabase
+from neo4j.exceptions import ServiceUnavailable, SessionExpired, ClientError, TransientError
 
-logger = logging.getLogger("Cloudscape.GraphIngestor")
+from core.config import config
 
 # ==============================================================================
-# PROJECT CLOUDSCAPE: ENTERPRISE GRAPH INGESTOR (NEO4J)
+# ENTERPRISE GRAPH INGESTOR (NEXUS 5.0 AETHER)
+# ==============================================================================
+# Asynchronous Neo4j Database pipeline. 
+# Implements aggressive keep-alives and connection pooling to prevent Windows 
+# IPv6 socket handshake drops.
+# Utilizes UNWIND batch chunking and Deep Serialization for OOM-safe graph writing.
 # ==============================================================================
 
 class GraphIngestor:
-    """
-    High-Performance Neo4j Database Manager.
-    Utilizes connection pooling, transactional batching (UNWIND), and 
-    schema-enforced Cypher queries to build the Enterprise Risk Mesh.
-    """
-
     def __init__(self):
-        self.uri = settings.NEO4J_URI
-        self.user = settings.NEO4J_USER
-        self.password = settings.NEO4J_PASSWORD
+        self.logger = logging.getLogger("Cloudscape.Processor.Ingestor")
+        
+        # ----------------------------------------------------------------------
+        # 1. DATABASE CONFIGURATION BINDING
+        # ----------------------------------------------------------------------
+        try:
+            db_cfg = config.settings.database
+            self.uri = db_cfg.uri
+            
+            # Secure credential extraction
+            auth_str = getattr(config.settings, 'neo4j_auth', "neo4j/Cloudscape2026!")
+            self.user, self.password = auth_str.split('/', 1) if '/' in auth_str else ("neo4j", "password")
+
+            # Batch chunking limit to prevent heap exhaustion during UNWIND
+            self.batch_size = getattr(db_cfg.ingestion, 'batch_size', 2500)
+            
+        except Exception as e:
+            self.logger.critical(f"Failed to parse database configuration: {e}")
+            raise
+
+        # ----------------------------------------------------------------------
+        # 2. DRIVER INSTANTIATION & SOCKET HARDENING
+        # ----------------------------------------------------------------------
+        try:
+            self.driver = AsyncGraphDatabase.driver(
+                self.uri,
+                auth=(self.user, self.password),
+                max_connection_pool_size=getattr(db_cfg, 'connection_pool_size', 100),
+                connection_acquisition_timeout=getattr(db_cfg, 'connection_timeout_sec', 15),
+                # [AETHER FIX] Force aggressive socket keep-alive to bypass Windows WinError 10053
+                keep_alive=True,
+                max_connection_lifetime=300 # Recycle sockets every 5 minutes to prevent staleness
+            )
+        except Exception as e:
+            self.logger.critical(f"FATAL: Failed to initialize Neo4j Driver: {e}")
+            raise
+
+    async def close(self) -> None:
+        """Gracefully tears down the TCP connection pool on system exit."""
+        if self.driver:
+            self.logger.info("Closing Neo4j Database Driver...")
+            await self.driver.close()
+
+    # ==========================================================================
+    # SCHEMA ENFORCEMENT & INITIALIZATION
+    # ==========================================================================
+
+    async def setup_schema(self) -> None:
+        """
+        Validates and creates the strict Neo4j 5.x Enterprise graph constraints.
+        Ensures O(1) lookup speeds for node merging.
+        *Method signature explicitly matched to Orchestrator line 207.*
+        """
+        self.logger.info("Asynchronous Neo4j Driver Initialized Successfully.")
+        self.logger.info("Validating Enterprise Graph Schema & Constraints...")
+        
+        queries = [
+            "CREATE CONSTRAINT unique_cloud_resource_arn IF NOT EXISTS FOR (n:CloudResource) REQUIRE n.arn IS UNIQUE",
+            "CREATE INDEX cloud_resource_tenant_idx IF NOT EXISTS FOR (n:CloudResource) ON (n._tenant_id)",
+            "CREATE INDEX cloud_resource_type_idx IF NOT EXISTS FOR (n:CloudResource) ON (n._resource_type)",
+            "CREATE INDEX cloud_resource_provider_idx IF NOT EXISTS FOR (n:CloudResource) ON (n._provider)"
+        ]
+        
+        async with self.driver.session() as session:
+            for query in queries:
+                try:
+                    await session.run(query)
+                except ClientError as e:
+                    # Ignore warnings about indexes already existing in newer Neo4j versions
+                    if "EquivalentSchemaRuleAlreadyExists" not in str(e):
+                        self.logger.error(f"Schema Client Error: {e}")
+                except Exception as e:
+                    self.logger.error(f"Failed to create schema constraint: {e}\nQuery: {query}")
+        
+        self.logger.info("Graph Schema Validation Complete.")
+
+    # ==========================================================================
+    # DEEP FLATTENING PROTOCOL (THE MAP TRAP BYPASS)
+    # ==========================================================================
+
+    def _normalize_properties(self, properties: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Neo4j strictly rejects nested Maps (dicts) or heterogeneous arrays. 
+        This recursive interceptor serializes complex data structures into safe 
+        JSON strings before they hit the database transaction.
+        """
+        normalized = {}
+        for k, v in properties.items():
+            if v is None:
+                continue
+                
+            # 1. Allowed Primitives (Direct Passthrough)
+            if isinstance(v, (str, int, float, bool)):
+                normalized[k] = v
+                
+            # 2. Arrays & Lists
+            elif isinstance(v, list):
+                # If it's a simple list of primitives (e.g., list of strings), Neo4j natively accepts it
+                if all(isinstance(i, (str, int, float, bool)) for i in v):
+                    normalized[k] = v
+                else:
+                    # If it's an array of dicts (e.g. nested security rules), serialize it immediately
+                    normalized[k] = json.dumps(v)
+                    
+            # 3. Dictionaries (Maps) -> Strict Serialization
+            elif isinstance(v, dict):
+                normalized[k] = json.dumps(v)
+                
+            # 4. Fallback for unknown objects (e.g. datetime objects)
+            else:
+                normalized[k] = str(v)
+                
+        return normalized
+
+    # ==========================================================================
+    # MASTER INGESTION PIPELINE
+    # ==========================================================================
+
+    async def ingest_payloads(self, tenant_id: str, payloads: List[Dict[str, Any]]) -> None:
+        """
+        The main ingestion handler. Matches Orchestrator signature exactly.
+        Parses Universal Resource Model (URM) payloads, flattens metadata, 
+        and batches them to the database via mathematically chunked UNWINDs.
+        """
+        if not payloads:
+            self.logger.debug(f"[{tenant_id}] No payloads provided to ingestion pipeline.")
+            return
+
+        self.logger.info(f"[{tenant_id}] Starting Database Ingestion Pipeline for {len(payloads)} payloads...")
+        
+        nodes_batch = []
+        edges_batch = [] 
+
+        for payload in payloads:
+            # Type assertion and safety fallbacks
+            metadata = payload.get("metadata", {})
+            raw_properties = payload.get("properties", {})
+            tags = payload.get("tags", {})
+            
+            # Identify if the payload is an explicit edge (from logic engines) or a standard node
+            if payload.get("type") == "explicit_edge":
+                edges_batch.append({
+                    "source_arn": payload.get("source_arn"),
+                    "target_arn": payload.get("target_arn"),
+                    "relation_type": payload.get("relation_type", "RELATES_TO"),
+                    "weight": float(payload.get("weight", 1.0))
+                })
+                continue
+            
+            # [AETHER FIX] Flatten properties to prevent Neo4j ClientError (The Map Trap)
+            safe_properties = self._normalize_properties(raw_properties)
+            
+            # Construct the flat, Cypher-safe dictionary
+            flat_node = {
+                "arn": str(metadata.get("arn", "unknown-arn")),
+                "_tenant_id": str(metadata.get("tenant_id", tenant_id)),
+                "_provider": str(metadata.get("provider", "UNKNOWN")),
+                "_resource_type": str(metadata.get("resource_type", "GenericResource")),
+                "_baseline_risk": float(metadata.get("baseline_risk_score", 0.0)),
+                "tags": json.dumps(tags) if tags else "{}", 
+                **safe_properties
+            }
+            
+            # Append State Differentials if they exist
+            if "_state_hash" in payload:
+                flat_node["_state_hash"] = str(payload["_state_hash"])
+                
+            nodes_batch.append(flat_node)
+
+        # Execute the atomic database writes using Chunking to prevent JVM Heap exhaustion
+        nodes_written = 0
+        edges_written = 0
         
         try:
-            self.driver = GraphDatabase.driver(self.uri, auth=(self.user, self.password))
-            self.driver.verify_connectivity()
-            logger.info("Successfully established connection pool to Neo4j Enterprise Graph.")
-        except ServiceUnavailable as e:
-            logger.error(f"[FATAL] Could not connect to Neo4j at {self.uri}. Is the container running?")
-            raise e
+            # Chunk and process Nodes
+            for i in range(0, len(nodes_batch), self.batch_size):
+                chunk = nodes_batch[i:i + self.batch_size]
+                nodes_written += await self._merge_nodes_batch(tenant_id, chunk)
 
-    def close(self):
-        """Safely terminates the Neo4j driver connection pool."""
-        self.driver.close()
-
-    def _prepare_properties(self, raw_dict: Dict[str, Any]) -> str:
-        """
-        Serializes complex nested JSON (like AWS Tags or Policies) into stringified 
-        JSON so Neo4j can store it as a node property without throwing type errors.
-        """
-        clean_dict = {}
-        for k, v in raw_dict.items():
-            if isinstance(v, (dict, list)):
-                clean_dict[k] = json.dumps(v)
-            else:
-                clean_dict[k] = v
-        return json.dumps(clean_dict)
-
-    def _ingest_tenant_root(self, tx: Transaction, tenant: TenantConfig):
-        """Creates the root organizational node for this specific project."""
-        cypher = """
-        MERGE (t:Tenant {id: $tenant_id})
-        SET t.name = $name,
-            t.provider = $provider,
-            t.account_id = $account_id,
-            t.risk_weight = $risk_weight,
-            t.tags = $tags,
-            t.last_scanned = datetime()
-        """
-        tx.run(cypher, 
-               tenant_id=tenant.id, 
-               name=tenant.name, 
-               provider=tenant.provider, 
-               account_id=tenant.account_id,
-               risk_weight=tenant.risk_weight,
-               tags=tenant.tags)
-
-    def _ingest_iam_batch(self, tx: Transaction, tenant: TenantConfig, iam_state: Dict[str, Any]):
-        """
-        Uses UNWIND to batch-insert thousands of IAM Roles simultaneously.
-        Automatically links every Role to its parent Tenant root node.
-        """
-        roles = iam_state.get("Roles", [])
-        if not roles:
-            return
-
-        # Prepare batch payload
-        batch_payload = []
-        for role in roles:
-            batch_payload.append({
-                "arn": role.get("Arn"),
-                "name": role.get("RoleName"),
-                "create_date": str(role.get("CreateDate")),
-                "inline_policies": json.dumps(role.get("Cloudscape_InlinePolicies", []))
-            })
-
-        cypher = """
-        UNWIND $batch AS row
-        MERGE (r:IAMRole {arn: row.arn})
-        SET r.name = row.name,
-            r.create_date = row.create_date,
-            r.inline_policies = row.inline_policies,
-            r.last_seen = datetime()
-        
-        WITH r
-        MATCH (t:Tenant {id: $tenant_id})
-        MERGE (r)-[:BELONGS_TO]->(t)
-        """
-        tx.run(cypher, batch=batch_payload, tenant_id=tenant.id)
-        logger.debug(f"[{tenant.id}] Batched {len(roles)} IAM Roles into Graph.")
-
-    def _ingest_network_batch(self, tx: Transaction, tenant: TenantConfig, network_state: Dict[str, Any]):
-        """Batches VPCs and Subnets into the graph."""
-        vpcs = network_state.get("VPCs", [])
-        if not vpcs:
-            return
-
-        batch_payload = [{"vpc_id": v.get("VpcId"), "cidr": v.get("CidrBlock")} for v in vpcs]
-
-        cypher = """
-        UNWIND $batch AS row
-        MERGE (v:VPC {id: row.vpc_id})
-        SET v.cidr = row.cidr,
-            v.last_seen = datetime()
+            # Chunk and process Edges
+            for i in range(0, len(edges_batch), self.batch_size):
+                chunk = edges_batch[i:i + self.batch_size]
+                edges_written += await self._merge_edges_batch(tenant_id, chunk)
+                
+            self.logger.info(f"[{tenant_id}] Ingestion Complete. Successfully wrote {nodes_written} Nodes and {edges_written} Edges.")
             
-        WITH v
-        MATCH (t:Tenant {id: $tenant_id})
-        MERGE (v)-[:HOSTED_IN]->(t)
-        """
-        tx.run(cypher, batch=batch_payload, tenant_id=tenant.id)
-        logger.debug(f"[{tenant.id}] Batched {len(vpcs)} VPCs into Graph.")
+        except Exception as e:
+            self.logger.error(f"[{tenant_id}] Critical Failure during ingestion: {e}\n{traceback.format_exc()}")
 
-    def _ingest_cross_tenant_edges(self, tx: Transaction, edges: List[Dict[str, Any]]):
-        """
-        The most critical function for Enterprise Risk mapping.
-        Takes the correlated edges from the Trust Resolver and builds the physical 
-        Neo4j relationships bridging isolated AWS accounts together.
-        """
-        if not edges:
-            return
+    # ==========================================================================
+    # CYPHER TRANSACTION EXECUTORS
+    # ==========================================================================
 
-        for edge in edges:
-            # We use APOC (if available) or raw cypher to dynamically set relationship types
-            # For strict safety and speed, we explicitly write the logic for known edge types
-            rel_type = edge.get("relationship")
-            source = edge.get("source_node")
-            target = edge.get("target_node")
-            meta = edge.get("metadata", {})
-            
-            if rel_type == "CAN_ASSUME_ROLE":
-                cypher = """
-                MERGE (source {arn: $source_arn}) // Creates an empty node if the principal doesn't exist yet
-                ON CREATE SET source:Identity, source.is_external = true
-                WITH source
-                MATCH (target:IAMRole {arn: $target_arn})
-                MERGE (source)-[r:CAN_ASSUME_ROLE]->(target)
-                SET r.source_project = $src_proj,
-                    r.target_project = $tgt_proj,
-                    r.is_internal_mesh = $is_internal
-                """
-                tx.run(cypher, 
-                       source_arn=source, 
-                       target_arn=target,
-                       src_proj=meta.get("source_project"),
-                       tgt_proj=meta.get("target_project"),
-                       is_internal=meta.get("is_internal_mesh", False))
-                
-            elif rel_type == "NETWORK_PEERED_TO":
-                cypher = """
-                MATCH (v1:VPC {id: $source_id})
-                MATCH (v2:VPC {id: $target_id})
-                MERGE (v1)-[r:NETWORK_PEERED_TO]-(v2) // Undirected merge, bidirectional traffic
-                SET r.peering_id = $peer_id
-                """
-                tx.run(cypher, 
-                       source_id=source, 
-                       target_id=target,
-                       peer_id=meta.get("peering_id"))
+    async def _merge_nodes_batch(self, tenant_id: str, batch: List[Dict]) -> int:
+        """
+        Executes a high-speed UNWIND operation to merge nodes safely.
+        Uses primary 'arn' constraint to ensure idempotency.
+        """
+        if not batch:
+            return 0
 
-    def ingest_tenant_state(self, tenant: TenantConfig, raw_state: Dict[str, Any], cross_edges: List[Dict[str, Any]]):
+        query = """
+        UNWIND $batch AS resource
+        MERGE (n:CloudResource {arn: resource.arn})
+        SET n += resource,
+            n:AetherNode,
+            n.last_seen = timestamp()
+        RETURN count(n) as updated_nodes
         """
-        Master execution method. Wraps all distinct domain batch inserts into a single 
-        managed Neo4j transaction. If one fails, the entire tenant block rolls back.
-        """
-        logger.info(f"[{tenant.id}] Initiating Graph Ingestion Transaction...")
         
-        with self.driver.session() as session:
-            try:
-                # 1. Ingest Base Infrastructure inside a Write Transaction
-                session.execute_write(self._ingest_tenant_root, tenant)
-                session.execute_write(self._ingest_iam_batch, tenant, raw_state.get("IAM", {}))
-                session.execute_write(self._ingest_network_batch, tenant, raw_state.get("Network", {}))
+        try:
+            async with self.driver.session() as session:
+                result = await session.run(query, batch=batch)
+                record = await result.single()
+                return record["updated_nodes"] if record else 0
                 
-                # 2. Ingest Cross-Tenant Edges (The Security Mesh)
-                session.execute_write(self._ingest_cross_tenant_edges, cross_edges)
+        except (ServiceUnavailable, SessionExpired) as e:
+            self.logger.error(f"[{tenant_id}] Socket Handshake Drop during Node Ingestion: {e}")
+            return 0
+        except TransientError as e:
+            self.logger.warning(f"[{tenant_id}] Transient Database Error (Deadlock/Memory). Batch skipped: {e}")
+            return 0
+        except Exception as e:
+            self.logger.error(f"[{tenant_id}] Unexpected Error during Node Ingestion: {e}")
+            return 0
+
+    async def _merge_edges_batch(self, tenant_id: str, batch: List[Dict]) -> int:
+        """
+        Executes an UNWIND operation for explicit edge generation.
+        Matches source and target ARNs, creates the relational vector.
+        """
+        if not batch:
+            return 0
+            
+        query = """
+        UNWIND $batch AS edge
+        MATCH (source:CloudResource {arn: edge.source_arn})
+        MATCH (target:CloudResource {arn: edge.target_arn})
+        CALL apoc.create.relationship(source, edge.relation_type, {weight: edge.weight, last_seen: timestamp()}, target)
+        YIELD rel
+        RETURN count(rel) as updated_edges
+        """
+        
+        try:
+            async with self.driver.session() as session:
+                result = await session.run(query, batch=batch)
+                record = await result.single()
+                return record["updated_edges"] if record else 0
                 
-                logger.info(f"[{tenant.id}] Graph Ingestion Transaction committed successfully.")
-            except Exception as e:
-                logger.error(f"[{tenant.id}] Transaction Failed! Graph rolled back. Error: {e}")
-                raise e
+        except Exception as e:
+            self.logger.error(f"[{tenant_id}] Unexpected Error during Edge Ingestion: {e}")
+            return 0
+
+# ==============================================================================
+# SINGLETON EXPORT
+# ==============================================================================
+# The Orchestrator imports this instance directly to ensure only one connection 
+# pool is created across the entire lifecycle of the application, avoiding socket rot.
+graph_ingestor = GraphIngestor()

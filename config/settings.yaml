@@ -1,0 +1,89 @@
+# ==============================================================================
+# CLOUDSCAPE NEXUS 5.0 (AETHER) - GLOBAL CONFIGURATION
+# ==============================================================================
+# This file is strictly validated by Pydantic at runtime via core/config.py.
+# Altering data types here (e.g., changing a boolean to a string) will trigger 
+# a fail-safe shutdown to prevent corrupted graph generation.
+# ==============================================================================
+
+app_metadata:
+  name: "Cloudscape Nexus Aether"
+  version: "5.0.0"
+  description: "Autonomous Cyber-Physical Graph Intelligence & Breach Simulation"
+
+# ------------------------------------------------------------------------------
+# 1. DATABASE INGESTION & CONNECTION POOLING
+# ------------------------------------------------------------------------------
+database:
+  uri: "bolt://127.0.0.1:7687"
+  connection_pool_size: 100
+  connection_timeout_sec: 15
+  transaction_retry_time_sec: 30
+  ingestion:
+    batch_size: 2500  # Optimal APOC UNWIND chunk size for 4GB JVM Heap
+
+# ------------------------------------------------------------------------------
+# 2. ORCHESTRATOR & CONCURRENCY
+# ------------------------------------------------------------------------------
+orchestrator:
+  max_concurrent_tenants: 10
+  hybrid_merge_strategy: "deep_merge"
+  enable_state_differential: false
+  worker_timeout_sec: 300
+
+# ------------------------------------------------------------------------------
+# 3. COMPLIANCE & FORENSIC EVIDENCE
+# ------------------------------------------------------------------------------
+forensics:
+  output_directory: "./forensics/reports"
+  generate_json_evidence: true
+  compress_reports: true
+  slack_alerts_enabled: false
+
+# ------------------------------------------------------------------------------
+# 4. MATHEMATICAL LOGIC ENGINES
+# ------------------------------------------------------------------------------
+logic_engine:
+  risk_scoring:
+    enabled: true
+    public_exposure_penalty: 25.0
+    admin_privilege_penalty: 50.0
+  
+  effective_permission_resolver:
+    enabled: true
+    flag_wildcard_actions: true
+
+  identity_fabric:
+    enabled: true
+    flag_shadow_admins: true
+    cross_cloud_mapping: true
+
+  attack_path_detection:
+    enabled: true
+    max_path_cost: 20.0
+    target_tags: ["critical", "high"]
+
+# ------------------------------------------------------------------------------
+# 5. SYNTHETIC UNIVERSE GENERATOR (GOD MODE)
+# ------------------------------------------------------------------------------
+simulation:
+  enabled: true
+  vulnerability_injection_rate: 0.05
+  base_node_multiplier: 50 
+
+# ------------------------------------------------------------------------------
+# 6. NETWORK TELEMETRY & CRAWLING CAPABILITIES
+# ------------------------------------------------------------------------------
+# [AETHER UPGRADE] Docker-Optimized Throttling.
+# Reduces socket pressure on LocalStack and Azurite to prevent WinError 10061.
+crawling:
+  api_retry_max_attempts: 5
+  api_retry_backoff_factor: 2.5
+  timeout_seconds: 60                 # Increased to allow emulators time to respond
+  max_pagination_depth: 100
+  concurrency_limit: 5                # Reduced from 20 to prevent local thread exhaustion
+  fail_open_on_access_denied: false
+  rate_limit_calls_per_sec: 2.0       # Strict Hz limit to prevent LocalStack socket drops
+  verify_ssl: true
+  max_worker_threads: 5               # Restrict background HTTP connection pools
+  user_agent: "Cloudscape-Nexus/5.0"

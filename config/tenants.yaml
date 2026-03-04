@@ -1,0 +1,102 @@
+# ==============================================================================
+# PROJECT CLOUDSCAPE: ENTERPRISE TENANT REGISTRY (NEXUS v5.0 AETHER)
+# ==============================================================================
+# This registry defines the multi-account/multi-cloud boundaries.
+# The orchestrator will spawn independent asynchronous worker pools for each 
+# tenant defined here, merging them via the Hybrid Data Bridge.
+#
+# STRICT VALIDATION RULES (Enforced by core/config.py Pydantic Models):
+# - provider: Must be strictly 'aws' or 'azure'
+# - environment_type: Must be 'production', 'development', 'sandbox', 'dr', 
+#                     'finance', or 'shared-services'
+# ==============================================================================
+
+tenants:
+  # ----------------------------------------------------------------------------
+  # TENANT 1: The High-Security Vault (Target for Attack Paths)
+  # ----------------------------------------------------------------------------
+  - id: "PROJ-FIN-01"
+    name: "Finance_Data_Vault"
+    provider: "aws"
+    environment_type: "production"
+    credentials:
+      aws_access_key_id: "test-finance-key"
+      aws_secret_access_key: "test-finance-secret"
+      aws_default_region: "us-east-1"
+    tags:
+      data_sensitivity: "high"
+      compliance: "pci-dss, sox"
+      endpoint_url: "http://127.0.0.1:4566" # Routes to LocalStack Core
+      description: "Holds encrypted RDS databases and PII S3 buckets."
+
+  # ----------------------------------------------------------------------------
+  # TENANT 2: The Public Attack Surface (Entry Point for Simulated Breaches)
+  # ----------------------------------------------------------------------------
+  - id: "PROJ-WEB-02"
+    name: "Customer_Facing_Web"
+    provider: "aws"
+    environment_type: "development"
+    credentials:
+      aws_access_key_id: "test-web-key"
+      aws_secret_access_key: "test-web-secret"
+      aws_default_region: "us-east-1"
+    tags:
+      data_sensitivity: "low"
+      compliance: "none"
+      endpoint_url: "http://127.0.0.1:4566"
+      description: "Hosts public ELBs and Web EC2s. Has a hidden cross-account trust to Finance."
+
+  # ----------------------------------------------------------------------------
+  # TENANT 3: The Network Backbone
+  # ----------------------------------------------------------------------------
+  - id: "PROJ-SHR-03"
+    name: "Shared_Infrastructure_Hub"
+    provider: "aws"
+    environment_type: "shared-services"
+    credentials:
+      aws_access_key_id: "test-shared-key"
+      aws_secret_access_key: "test-shared-secret"
+      aws_default_region: "us-east-1"
+    tags:
+      data_sensitivity: "medium"
+      compliance: "internal"
+      endpoint_url: "http://127.0.0.1:4566"
+      description: "Central Transit Gateway and VPC Peering hub. Connects Web and Finance."
+
+  # ----------------------------------------------------------------------------
+  # TENANT 4: The Cross-Cloud Identity Provider
+  # ----------------------------------------------------------------------------
+  # [AETHER UPGRADE] environment_type modified from 'identity-management' to 
+  # 'shared-services' to pass strict mathematical Pydantic validation.
+  - id: "PROJ-AZURE-04"
+    name: "Azure_Identity_Core"
+    provider: "azure"
+    environment_type: "shared-services" 
+    credentials:
+      azure_client_id: "mock-azure-client-id"
+      azure_client_secret: "mock-azure-client-secret"
+      azure_tenant_id: "mock-azure-tenant"
+      azure_subscription_id: "00000000-0000-0000-0000-000000000000"
+    tags:
+      data_sensitivity: "critical"
+      compliance: "iso-27001"
+      endpoint_url: "http://127.0.0.1:10000" # Routes to Azurite Storage Blob
+      azure_location: "eastus"
+      description: "Mocks Entra ID and KeyVault. Contains Service Principals that hold AWS access keys."
+
+  # ----------------------------------------------------------------------------
+  # TENANT 5: The Disaster Recovery Environment
+  # ----------------------------------------------------------------------------
+  - id: "PROJ-DR-05"
+    name: "Disaster_Recovery_Cold"
+    provider: "aws"
+    environment_type: "dr"
+    credentials:
+      aws_access_key_id: "test-dr-key"
+      aws_secret_access_key: "test-dr-secret"
+      aws_default_region: "eu-central-1" # Asynchronous European fallback
+    tags:
+      data_sensitivity: "high"
+      compliance: "soc2"
+      endpoint_url: "http://127.0.0.1:4566"
+      description: "Cold standby. Contains S3 Cross-Region Replication targets."
