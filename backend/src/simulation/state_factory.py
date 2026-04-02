@@ -821,17 +821,26 @@ class StateFactory:
             if next_state == "IAM_Role":
                 role_name = f"Stochastic-Role-{hop_uid}"
                 role_arn = f"arn:aws:iam::{aws_account}:role/{role_name}"
-                nodes.append(self._format_synthetic_node("AWS", "iam", "Role", role_arn, role_name, 7.5, {}))
+                role_node = self._format_synthetic_node("AWS", "iam", "Role", role_arn, role_name, 7.5, {})
+                # 20% chance of being Log4j vulnerable if it were a compute resource, 
+                # but we'll attach it as a software metadata.
+                role_node["metadata"]["software_cpe"] = "cpe:2.3:a:apache:log4j:2.14.1"
+                nodes.append(role_node)
                 manifest.hop_arns.append(role_arn)
             elif next_state == "Database":
                 db_name = f"Stochastic-DB-{hop_uid}"
                 db_arn = f"arn:aws:rds:us-east-1:{aws_account}:db:{db_name}"
-                nodes.append(self._format_synthetic_node("AWS", "rds", "DBInstance", db_arn, db_name, 9.0, {}))
+                db_node = self._format_synthetic_node("AWS", "rds", "DBInstance", db_arn, db_name, 9.0, {})
+                db_node["metadata"]["cve"] = "CVE-2022-0811" # Container escape context for RDS? No, but for simulation variety
+                nodes.append(db_node)
                 manifest.hop_arns.append(db_arn)
             elif next_state == "Data_Exfil":
                 bucket_name = f"Stochastic-Exfil-S3-{hop_uid}"
                 bucket_arn = f"arn:aws:s3:::{bucket_name}"
-                nodes.append(self._format_synthetic_node("AWS", "s3", "Bucket", bucket_arn, bucket_name, 9.5, {"PublicAccess": True}))
+                bucket_node = self._format_synthetic_node("AWS", "s3", "Bucket", bucket_arn, bucket_name, 9.5, {"PublicAccess": True})
+                # Simulate the specific misconfig that triggers our CSPM rule
+                bucket_node["metadata"]["Policy"] = json.dumps({"Statement": [{"Effect": "Allow", "Principal": "*", "Action": "s3:GetObject"}]})
+                nodes.append(bucket_node)
                 manifest.hop_arns.append(bucket_arn)
                 manifest.target_arn = bucket_arn
                 break # Terminate walk

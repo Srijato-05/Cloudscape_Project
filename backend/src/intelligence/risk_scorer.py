@@ -275,19 +275,26 @@ class CVSSCalculator:
         except Exception as e:
             self.logger.warning(f"Failed to calculate CVSS vector '{vector_string}': {e}")
             return 0.0
-
-    def infer_cve_for_node(self, node_type: str, properties: Dict, tags: Dict) -> Tuple[float, str, str]:
+    def infer_cve_for_node(self, node_type: str, properties: Dict, tags: Dict) -> Tuple[float, str, str]:
         """
-        CLOUDSCAPE 6.0 EXTREME REALISM: Simulates Threat Intelligence mapping. 
-        Maps inferred cloud misconfigurations directly to real-world MITRE ATT&CK 
-        Cloud/Container Tactics and Techniques.
+        CLOUDSCAPE 6.0 EXTRERE REALISM: Simulates Threat Intelligence mapping. 
+        Enriched with Supreme-Tier metadata from the registry.
         """
+        import importlib
+        vuln_reg_mod = importlib.import_module("intelligence.vulnerability_registry")
+        vulnerability_registry = vuln_reg_mod.vulnerability_registry
+        
         prop_str = str(properties).lower()
         
         # Scenario 1: Unauthenticated SSRF on Compute Instance (IMDSv1 Vulnerability)
         if node_type in ["instance", "virtualmachine", "ec2"]:
             metadata_opts = properties.get("MetadataOptions", {})
             if metadata_opts.get("HttpTokens") != "required":
+                # Check for registry entry if any, otherwise use local mapping
+                meta = vulnerability_registry.lookup("AWS_IMDSV1_SSRF")
+                if meta:
+                    return meta["cvss_score"], f"{meta['title']}: {meta['technical_explanation']} [MITRE: {meta['mitre_details']['tactic']}]", "\n".join(meta["remediation_blueprint"])
+                
                 mapping = self.risk_factors.get("cve_mappings", {}).get("imdsv1_ssrf", {})
                 vector = mapping.get("vector", "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:N/A:N")
                 score = self.calculate_base_score(vector)
@@ -299,6 +306,10 @@ class CVSSCalculator:
             public_write = "publicwrite" in prop_str or "public-read-write" in prop_str
             
             if public_write and not versioning:
+                meta = vulnerability_registry.lookup("AWS_S3_PUBLIC_EXPOSURE")
+                if meta:
+                    return meta["cvss_score"], f"{meta['title']}: {meta['technical_explanation']} [MITRE: {meta['mitre_details']['tactic']}]", "\n".join(meta["remediation_blueprint"])
+
                 mapping = self.risk_factors.get("cve_mappings", {}).get("ransomware_exposure", {})
                 vector = mapping.get("vector", "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H")
                 score = self.calculate_base_score(vector)
@@ -323,6 +334,7 @@ class CVSSCalculator:
                     return score, str(mapping.get("description", "[MITRE T1078] Host Credential Theft (Writable HostPath)")), str(mapping.get("remediation", ""))
 
         return 0.0, "", ""
+
 
 # ------------------------------------------------------------------------------
 # SUB-SYSTEM 3: BAYESIAN THREAT INFERENCING & GNN EMBEDDING (CLOUDSCAPE 6.0)

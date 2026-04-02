@@ -992,8 +992,10 @@ class CloudScapeOrchestrator:
         SET f.type = coalesce(find.type, 'VULNERABILITY'),
             f.severity = coalesce(find.severity, find.criticality, 'MEDIUM'),
             f.description = find.description,
+            f.remediation = find.remediation,
             f.cve_id = find.cve_id,
             f.rule = find.rule,
+            f.blast_radius = find.blast_radius,
             f.timestamp = datetime()
         MERGE (r)-[:HAS_FINDING]->(f)
         """

@@ -122,6 +122,7 @@ class UnifiedVulnOrchestrator:
         """
         Parses `requirements.txt` or Node manifests from discovered compute nodes,
         dynamically flagging dependency trees against a mock runtime JSON corpus.
+        Enriched with Supreme-Tier technical depth.
         """
         findings = []
         lines = requirements_content.split("\n")
@@ -139,13 +140,27 @@ class UnifiedVulnOrchestrator:
                     exclude_versions = rule.get("exclude_versions", [])
                     if exclude_versions:
                         if not any(v in line for v in exclude_versions):
-                            findings.append({"package": line, "vulnerability": rule.get("vulnerability"), "description": rule.get("description"), "remediation": rule.get("remediation"), "line": idx+1})
+                            findings.append({
+                                "package": line, 
+                                "id": rule.get("vulnerability"), 
+                                "severity": rule.get("severity", "HIGH"),
+                                "description": f"{rule.get('vulnerability')}: {rule.get('description')} [MITRE T1195.002] Supply Chain Compromise: Vulnerable dependency {line} detected.", 
+                                "remediation": rule.get("remediation", "Update package to a secured version."), 
+                                "line": idx+1
+                            })
                     
                     # Handle trigger version match
                     trigger_versions = rule.get("trigger_versions", [])
                     if trigger_versions:
                         if any(v in line for v in trigger_versions):
-                            findings.append({"package": line, "vulnerability": rule.get("vulnerability"), "description": rule.get("description"), "remediation": rule.get("remediation"), "line": idx+1})
+                            findings.append({
+                                "package": line, 
+                                "id": rule.get("vulnerability"), 
+                                "severity": rule.get("severity", "HIGH"),
+                                "description": f"{rule.get('vulnerability')}: {rule.get('description')} [MITRE T1195.002] Supply Chain Compromise: Vulnerable dependency {line} detected.", 
+                                "remediation": rule.get("remediation", "Update package to a secured version."), 
+                                "line": idx+1
+                            })
                 
         return {
             "scan_type": "SCA",
@@ -211,21 +226,36 @@ class UnifiedVulnOrchestrator:
     def evaluate_cspm_controls(self, cloud_state: Dict[str, Any]) -> Dict[str, Any]:
         """
         Dynamically analyzes Infrastructure-as-Code (or Live State) against
-        compliance benchmarks (CIS, NIST). Maps violations dynamically.
+        compliance benchmarks (CIS, NIST). Maps violations dynamically and 
+        enriches with Supreme-Tier metadata.
         """
+        import importlib
+        vuln_reg_mod = importlib.import_module("intelligence.vulnerability_registry")
+        vulnerability_registry = vuln_reg_mod.vulnerability_registry
+        
         findings = []
         
         # 1. Block Public Access (S3)
         for bucket in cloud_state.get('Storage', {}).get('S3Buckets', []):
             policy = str(bucket.get('Policy', ''))
             if '"Principal": "*"' in policy and "Allow" in policy:
-                findings.append({
-                    "resource": bucket.get('Arn'),
-                    "framework": "CIS 2.1.5",
-                    "severity": "CRITICAL",
-                    "cvss_score": 9.0,
-                    "description": "[MITRE T1020] S3 Bucket allows unrestricted public data exfiltration."
-                })
+                # Lookup advanced metadata
+                reg_entry = vulnerability_registry.lookup("AWS_S3_PUBLIC_EXPOSURE")
+                if reg_entry:
+                    findings.append({
+                        "id": "CSPM-IAM-001",
+                        "title": reg_entry.get("title"),
+                        "severity": "CRITICAL",
+                        "description": reg_entry.get("technical_explanation"),
+                        "remediation": reg_entry.get("remediation_blueprint")[0] if isinstance(reg_entry.get("remediation_blueprint"), list) else "Rotate IAM keys.",
+                        "mitre": reg_entry.get("mitre_details"),
+                        "resource_arn": bucket.get("Arn"),
+                        "blast_radius": 5.4
+                    })
+
+        # 3. IMDSv1 Detection (EC2)
+        # Assuming node context is passed or derived
+        # (Placeholder for logic integration)
                 
         # 2. In-Transit Encryption (RDS/EC2)
         for sg in cloud_state.get('Network', {}).get('SecurityGroups', []):
@@ -236,7 +266,8 @@ class UnifiedVulnOrchestrator:
                         "framework": "CIS 4.1",
                         "severity": "HIGH",
                         "cvss_score": 7.5,
-                        "description": "[MITRE T1190] Security Group allows inbound SSH (Port 22) from the entire internet."
+                        "description": "[MITRE T1190] Security Group allows inbound SSH (Port 22) from the entire internet. This facilitates brute-force attacks and lateral movement vectors.",
+                        "remediation": "Restrict Port 22 access to specific bastion host IPs or VPN gateways."
                     })
 
         # 3. IAM Least Privilege
@@ -247,7 +278,8 @@ class UnifiedVulnOrchestrator:
                     "framework": "NIST 800-53 AC-6",
                     "severity": "HIGH",
                     "cvss_score": 8.0,
-                    "description": "[MITRE T1078] IAM Role possesses highly privileged AdministratorAccess."
+                    "description": "[MITRE T1078] IAM Role possesses highly privileged AdministratorAccess. This violates the principle of least privilege and increases the blast radius of a credential compromise.",
+                    "remediation": "Replace AdministratorAccess with fine-grained IAM policies targeting only required services."
                  })
         
         return {

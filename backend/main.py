@@ -483,23 +483,37 @@ async def run_pipeline(args: argparse.Namespace, logger: logging.Logger) -> None
             console.print()
             
             if top_threats:
-                matrix = Table(title="Semantic Security Findings Matrix", border_style="red", box=box.DOUBLE)
-                matrix.add_column("Resource ARN", style="cyan", overflow="fold")
-                matrix.add_column("Rule / CVE", style="magenta")
+                matrix = Table(
+                    title="[bold italic white]Semantic Security Findings Matrix[/bold italic white]", 
+                    border_style="red", 
+                    box=box.SQUARE,
+                    show_lines=True
+                )
+                matrix.add_column("Resource ARN", style="cyan", overflow="fold", ratio=1)
+                matrix.add_column("Rule / CVE", style="magenta", justify="center")
                 matrix.add_column("Severity", style="bold red", justify="center")
                 matrix.add_column("Description", style="white", overflow="fold", ratio=2)
                 matrix.add_column("Blast Radius", style="bold yellow", justify="center")
                 matrix.add_column("Remediation", style="green", overflow="fold", ratio=2)
                 
                 for t in top_threats: # pyre-ignore[6]
-                    r_id = t.get("cve_id") or t.get("rule") or t.get("framework") or t.get("id", "UNKNOWN")
+                    cve_id = t.get("id") or t.get("cve_id") or "N/A"
+                    desc = t.get("description") or t.get("title") or "No description provided."
+                    
+                    # Inject MITRE prefix if available
+                    mitre = t.get("mitre") or {}
+                    tactic = mitre.get("tactic", "")
+                    technique = mitre.get("technique", "").split(" (")[0]
+                    if technique:
+                        desc = f"[[bold blue]{technique}[/bold blue]] {desc}"
+
                     matrix.add_row(
-                        str(t.get("resource_arn", "UNKNOWN")),
-                        str(r_id),
-                        str(t.get("severity", "CRITICAL")),
-                        str(t.get("description", "No description provided.")),
-                        f"{t.get('blast_radius', 0.0):.1f}",
-                        str(t.get("remediation", "Investigate logic flows and implement secure boundaries."))
+                        str(t.get("resource_arn") or t.get("arn", "UNKNOWN")),
+                        str(cve_id),
+                        f"[bold red]{str(t.get('severity', 'CRITICAL'))}[/bold red]",
+                        desc,
+                        f"[bold yellow]{t.get('blast_radius', 3.3):.1f}[/bold yellow]",
+                        str(t.get("remediation") or "Investigate logic flows and implement secure boundaries.")
                     )
                 console.print(matrix)
                 
@@ -581,21 +595,31 @@ def main() -> None:
     
     # Enable Verbose Tracing if requested
     if args.verbose_trace:
-        from utils.verbose_logger import diagnostic_tracer
+        import importlib
+        vlog_mod = importlib.import_module("src.utils.verbose_logger")
+        diagnostic_tracer = vlog_mod.diagnostic_tracer
         os.environ["VERBOSE_DIAGNOSTIC"] = "1"
         console.print("[bold cyan]Bit-level Diagnostic Tracing: ENABLED[/bold cyan]")
 
     # PHASE 5: Health & Special Modes
     if args.health:
-        from utils.health import HealthMonitor
+        import importlib
+        health_mod = importlib.import_module("src.utils.health")
+        HealthMonitor = health_mod.HealthMonitor
         monitor = HealthMonitor({})
         report = monitor.run_preflight_checks()
         console.print(Panel(json.dumps(report, indent=2), title="[bold green]Health Diagnostic Report[/bold green]"))
         sys.exit(0 if report["overall_status"] == "HEALTHY" else 1)
         
     if args.timeline:
-        from simulation.simulation_studio import SimulationStudio
-        from core.forensics import forensic_ledger, TimelineReconstructor
+        import importlib
+        sim_studio_mod = importlib.import_module("src.simulation.simulation_studio")
+        SimulationStudio = sim_studio_mod.SimulationStudio
+        
+        forensics_mod = importlib.import_module("src.core.forensics")
+        forensic_ledger = forensics_mod.forensic_ledger
+        TimelineReconstructor = forensics_mod.TimelineReconstructor
+        
         reconstructor = TimelineReconstructor(forensic_ledger)
         # Assuming a default or latest scan_id for demo
         timeline = reconstructor.playback_scan("SIM-MOCK-SCAN")
