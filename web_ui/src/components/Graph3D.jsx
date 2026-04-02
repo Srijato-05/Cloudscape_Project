@@ -1,46 +1,132 @@
 import { useRef, useMemo, useCallback, useState, useEffect } from 'react';
-import { Canvas, useFrame, useThree, invalidate } from '@react-three/fiber';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
+import { forceSimulation, forceLink, forceManyBody, forceCenter } from 'd3-force-3d';
 import useStore from '../stores/useStore';
 
 // =============================================================================
-// PERFORMANCE-OPTIMIZED GRAPH3D
-// Uses InstancedMesh to render thousands of nodes in a single draw call.
-// Caps rendered nodes and edges to keep WebGL responsive.
+// Cloudscape 6.0: ADVANCED FORCE-DIRECTED PHYSICS ENGINE
 // =============================================================================
 
-const MAX_VISIBLE_NODES = 500;
-const MAX_VISIBLE_EDGES = 800;
+const MAX_VISIBLE_NODES = 400; // Controlled for extreme physics layout
 
 const DUMMY = new THREE.Object3D();
 const COLOR = new THREE.Color();
 
 // Risk/provider → color mapping
 function getNodeColor(node) {
-  if (node.riskScore > 80) return '#ef4444';
-  if (node.riskScore > 50) return '#f97316';
-  if (node.provider === 'aws' || node.provider === 'AWS') return '#fbbf24';
-  if (node.provider === 'azure' || node.provider === 'AZURE') return '#0ea5e9';
-  return '#3b82f6';
+  if (node.riskScore > 80) return '#ff1053'; // Neon Red
+  if (node.riskScore > 50) return '#ff9900'; // AWS Orange
+  if (node.provider === 'aws' || node.provider === 'AWS') return '#f5d547';
+  if (node.provider === 'azure' || node.provider === 'AZURE') return '#00a1ff';
+  return '#1e90ff';
 }
 
 // ---------------------------------------------------------------------------
-// InstancedNodes – one draw call for all spheres
+// Particle Flow engine
 // ---------------------------------------------------------------------------
-function InstancedNodes({ nodes, positions, onSelect }) {
+function ParticleFlow({ links, nodesObj }) {
+  const meshRef = useRef();
+  
+  // Create 2 particles per link for continuous flow
+  const particles = useMemo(() => {
+    return links.map(link => ({
+      link,
+      progress: Math.random(),
+      speed: 0.002 + Math.random() * 0.003
+    }));
+  }, [links]);
+
+  useFrame(() => {
+    if (!meshRef.current) return;
+    particles.forEach((p, i) => {
+      p.progress += p.speed;
+      if (p.progress > 1) p.progress = 0;
+
+      const sourceNode = p.link.source;
+      const targetNode = p.link.target;
+      
+      if (!sourceNode || !targetNode || sourceNode.x === undefined) return;
+
+      const x = sourceNode.x + (targetNode.x - sourceNode.x) * p.progress;
+      const y = sourceNode.y + (targetNode.y - sourceNode.y) * p.progress;
+      const z = sourceNode.z + (targetNode.z - sourceNode.z) * p.progress;
+
+      DUMMY.position.set(x, y, z);
+      DUMMY.scale.set(0.4, 0.4, 0.4);
+      DUMMY.updateMatrix();
+      meshRef.current.setMatrixAt(i, DUMMY.matrix);
+      
+      // Pulse color based on threat
+      const glowStr = (Math.sin(p.progress * Math.PI * 10) + 1) / 2;
+      COLOR.set(p.link.source.riskScore > 50 ? '#ff1053' : '#00d2ff').multiplyScalar(0.5 + glowStr);
+      meshRef.current.setColorAt(i, COLOR);
+    });
+    meshRef.current.instanceMatrix.needsUpdate = true;
+    if (meshRef.current.instanceColor) meshRef.current.instanceColor.needsUpdate = true;
+  });
+
+  return (
+    <instancedMesh ref={meshRef} args={[null, null, particles.length]}>
+      <sphereGeometry args={[1, 8, 8]} />
+      <meshBasicMaterial transparent opacity={0.8} toneMapped={false} />
+    </instancedMesh>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// InstancedNodes & Edges
+// ---------------------------------------------------------------------------
+function PhysicsGraph({ nodes, edges, onSelect }) {
   const meshRef = useRef();
   const glowRef = useRef();
+  const linesRef = useRef();
+  
+  // Setup d3-force-3d simulation
+  const { simNodes, simLinks } = useMemo(() => {
+    const nodeObj = {};
+    const simNodes = nodes.map(n => {
+      const clone = { ...n };
+      nodeObj[n.id] = clone;
+      return clone;
+    });
+    
+    const simLinks = edges
+      .filter(e => nodeObj[e.source] && nodeObj[e.target])
+      .map(e => ({
+        source: nodeObj[e.source],
+        target: nodeObj[e.target],
+        value: 1
+      }));
 
-  useEffect(() => {
-    if (!meshRef.current || !glowRef.current) return;
+    const simulation = forceSimulation(simNodes, 3)
+      .force('link', forceLink(simLinks).id(d => d.id).distance(20))
+      .force('charge', forceManyBody().strength(-80))
+      .force('center', forceCenter());
 
-    nodes.forEach((node, i) => {
-      const pos = positions[node.id];
-      if (!pos) return;
+    // Run simulation synchronously to stabilize initial layout
+    for (let i = 0; i < 150; i++) simulation.tick();
+    
+    return { simNodes, simLinks, nodeObj };
+  }, [nodes, edges]);
 
-      DUMMY.position.set(pos[0], pos[1], pos[2]);
-      DUMMY.scale.set(1, 1, 1);
+  useFrame(({ clock }) => {
+    if (!meshRef.current || !glowRef.current || !linesRef.current) return;
+    const time = clock.getElapsedTime();
+
+    // 1. Update Nodes
+    simNodes.forEach((node, i) => {
+      // Gentle floating animation
+      const floatY = Math.sin(time * 2 + i) * 0.5;
+      DUMMY.position.set(node.x, node.y + floatY, node.z);
+      
+      // Pulse critical nodes
+      let scale = 1;
+      if (node.riskScore > 80) {
+        scale = 1 + Math.sin(time * 5 + i) * 0.2;
+      }
+      DUMMY.scale.set(scale, scale, scale);
       DUMMY.updateMatrix();
 
       meshRef.current.setMatrixAt(i, DUMMY.matrix);
@@ -56,275 +142,114 @@ function InstancedNodes({ nodes, positions, onSelect }) {
     if (meshRef.current.instanceColor) meshRef.current.instanceColor.needsUpdate = true;
     if (glowRef.current.instanceColor) glowRef.current.instanceColor.needsUpdate = true;
 
-    // Force a re-render so colors appear immediately
-    invalidate();
-  }, [nodes, positions]);
+    // 2. Update Edges
+    const positions = linesRef.current.geometry.attributes.position.array;
+    simLinks.forEach((link, i) => {
+      const src = link.source;
+      const tgt = link.target;
+      const srcFloatY = Math.sin(time * 2 + simNodes.indexOf(src)) * 0.5;
+      const tgtFloatY = Math.sin(time * 2 + simNodes.indexOf(tgt)) * 0.5;
+      
+      positions[i * 6]     = src.x;
+      positions[i * 6 + 1] = src.y + srcFloatY;
+      positions[i * 6 + 2] = src.z;
+      
+      positions[i * 6 + 3] = tgt.x;
+      positions[i * 6 + 4] = tgt.y + tgtFloatY;
+      positions[i * 6 + 5] = tgt.z;
+    });
+    linesRef.current.geometry.attributes.position.needsUpdate = true;
+  });
 
   const handleClick = useCallback((e) => {
     e.stopPropagation();
     const idx = e.instanceId;
-    if (idx !== undefined && nodes[idx]) {
-      onSelect(nodes[idx]);
+    if (idx !== undefined && simNodes[idx]) {
+      onSelect(nodes.find(n => n.id === simNodes[idx].id)); // return original node object
     }
-  }, [nodes, onSelect]);
+  }, [simNodes, nodes, onSelect]);
+
+  const edgeGeometry = useMemo(() => {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(simLinks.length * 6), 3));
+    return geo;
+  }, [simLinks]);
 
   return (
     <group>
-      {/* Main spheres */}
-      <instancedMesh
-        ref={meshRef}
-        args={[undefined, undefined, nodes.length]}
-        onClick={handleClick}
-      >
-        <sphereGeometry args={[0.8, 12, 12]} />
-        <meshBasicMaterial
-          color="#ffffff"
-          transparent
-          opacity={0.95}
-          toneMapped={false}
-        />
+      {/* Edges */}
+      <lineSegments ref={linesRef} geometry={edgeGeometry}>
+        <lineBasicMaterial color="#00a1ff" transparent opacity={0.15} blending={THREE.AdditiveBlending} />
+      </lineSegments>
+
+      {/* Nodes */}
+      <instancedMesh ref={meshRef} args={[null, null, simNodes.length]} onClick={handleClick}>
+        <sphereGeometry args={[1.2, 16, 16]} />
+        <meshStandardMaterial roughness={0.2} metalness={0.8} />
       </instancedMesh>
 
-      {/* Glow halos */}
-      <instancedMesh
-        ref={glowRef}
-        args={[undefined, undefined, nodes.length]}
-      >
-        <sphereGeometry args={[1.1, 8, 8]} />
-        <meshBasicMaterial
-          color="#ffffff"
-          transparent
-          opacity={0.3}
-          toneMapped={false}
-          side={THREE.BackSide}
-        />
+      {/* Glowing Halos */}
+      <instancedMesh ref={glowRef} args={[null, null, simNodes.length]}>
+        <sphereGeometry args={[1.8, 12, 12]} />
+        <meshBasicMaterial transparent opacity={0.2} blending={THREE.AdditiveBlending} depthWrite={false} />
       </instancedMesh>
+
+      {/* Dynamic Data Flow Particles */}
+      <ParticleFlow links={simLinks} />
     </group>
   );
 }
 
 // ---------------------------------------------------------------------------
-// BatchEdges – single BufferGeometry for all edge lines
-// ---------------------------------------------------------------------------
-function BatchEdges({ edges, positions }) {
-  const ref = useRef();
-
-  const geometry = useMemo(() => {
-    const points = [];
-    let count = 0;
-
-    for (const edge of edges) {
-      if (count >= MAX_VISIBLE_EDGES) break;
-      const src = positions[edge.source];
-      const tgt = positions[edge.target];
-      if (!src || !tgt) continue;
-
-      points.push(src[0], src[1], src[2]);
-      points.push(tgt[0], tgt[1], tgt[2]);
-      count++;
-    }
-
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(points, 3));
-    return geo;
-  }, [edges, positions]);
-
-  return (
-    <lineSegments ref={ref} geometry={geometry}>
-      <lineBasicMaterial color={0x00a1ff} transparent opacity={0.25} />
-    </lineSegments>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// SelectedNodeLabel – only renders a label for the clicked node
-// ---------------------------------------------------------------------------
-function SelectedNodeLabel({ node, positions }) {
-  const pos = positions[node.id];
-  if (!pos) return null;
-
-  return (
-    <group position={[pos[0], pos[1] + 2.5, pos[2]]}>
-      <sprite scale={[6, 1.5, 1]}>
-        <spriteMaterial
-          color="#ffffff"
-          transparent
-          opacity={0.85}
-          sizeAttenuation={false}
-        />
-      </sprite>
-    </group>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// ClickHandler – manual raycasting that works WITH OrbitControls
-// Detects short clicks (not drags) and finds the nearest node sphere
-// ---------------------------------------------------------------------------
-function ClickHandler({ nodes, positions, onSelect }) {
-  const { camera, gl, raycaster, pointer } = useThree();
-  const downPos = useRef({ x: 0, y: 0 });
-
-  useEffect(() => {
-    const canvas = gl.domElement;
-
-    const onPointerDown = (e) => {
-      downPos.current = { x: e.clientX, y: e.clientY };
-    };
-
-    const onPointerUp = (e) => {
-      // Only trigger if the mouse didn't drag (click, not orbit)
-      const dx = e.clientX - downPos.current.x;
-      const dy = e.clientY - downPos.current.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist > 5) return; // was a drag, not a click
-
-      // Convert mouse position to NDC
-      const rect = canvas.getBoundingClientRect();
-      const ndcX = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-      const ndcY = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-
-      // Create a ray from the camera
-      raycaster.setFromCamera({ x: ndcX, y: ndcY }, camera);
-      const ray = raycaster.ray;
-
-      // Find the closest node to the ray
-      let closestNode = null;
-      let closestDist = Infinity;
-      const hitRadius = 1.2; // slightly bigger than sphere radius for easier clicking
-
-      for (const node of nodes) {
-        const pos = positions[node.id];
-        if (!pos) continue;
-
-        const nodePos = new THREE.Vector3(pos[0], pos[1], pos[2]);
-        const distToRay = ray.distanceToPoint(nodePos);
-
-        if (distToRay < hitRadius && distToRay < closestDist) {
-          closestDist = distToRay;
-          closestNode = node;
-        }
-      }
-
-      if (closestNode) {
-        onSelect(closestNode);
-      }
-    };
-
-    canvas.addEventListener('pointerdown', onPointerDown);
-    canvas.addEventListener('pointerup', onPointerUp);
-
-    return () => {
-      canvas.removeEventListener('pointerdown', onPointerDown);
-      canvas.removeEventListener('pointerup', onPointerUp);
-    };
-  }, [camera, gl, raycaster, nodes, positions, onSelect]);
-
-  return null; // This component only handles events, renders nothing
-}
-
-// ---------------------------------------------------------------------------
-// Scene
+// Scene Setup
 // ---------------------------------------------------------------------------
 function Scene({ nodes, edges }) {
   const { setSelectedNode } = useStore();
 
-  // Sample down if too many nodes – pick top risk + random sample
   const visibleNodes = useMemo(() => {
     if (nodes.length <= MAX_VISIBLE_NODES) return nodes;
-
-    // Always include high-risk nodes first
     const highRisk = nodes.filter(n => n.riskScore > 50);
-    const rest = nodes.filter(n => n.riskScore <= 50);
-
-    // Shuffle rest and take enough to fill the cap
-    const shuffled = rest.sort(() => Math.random() - 0.5);
-    const remaining = MAX_VISIBLE_NODES - highRisk.length;
-    return [...highRisk.slice(0, MAX_VISIBLE_NODES), ...shuffled.slice(0, Math.max(0, remaining))].slice(0, MAX_VISIBLE_NODES);
+    const rest = nodes.filter(n => n.riskScore <= 50).sort(() => Math.random() - 0.5);
+    return [...highRisk.slice(0, MAX_VISIBLE_NODES), ...rest.slice(0, Math.max(0, MAX_VISIBLE_NODES - highRisk.length))].slice(0, MAX_VISIBLE_NODES);
   }, [nodes]);
 
-  // Build a set of visible node IDs for edge filtering
   const visibleIdSet = useMemo(() => new Set(visibleNodes.map(n => n.id)), [visibleNodes]);
-
-  const visibleEdges = useMemo(() => {
-    return edges.filter(e => visibleIdSet.has(e.source) && visibleIdSet.has(e.target));
-  }, [edges, visibleIdSet]);
-
-  // Precalculate positions – fibonacci sphere distribution
-  const positions = useMemo(() => {
-    const pos = {};
-    const count = visibleNodes.length;
-    const radius = Math.max(15, Math.sqrt(count) * 1.5);
-
-    visibleNodes.forEach((node, i) => {
-      const phi = Math.acos(-1 + (2 * i) / count);
-      const theta = Math.sqrt(count * Math.PI) * phi;
-
-      pos[node.id] = [
-        radius * Math.cos(theta) * Math.sin(phi),
-        radius * Math.sin(theta) * Math.sin(phi),
-        radius * Math.cos(phi)
-      ];
-    });
-    return pos;
-  }, [visibleNodes]);
+  const visibleEdges = useMemo(() => edges.filter(e => visibleIdSet.has(e.source) && visibleIdSet.has(e.target)), [edges, visibleIdSet]);
 
   return (
     <>
-      <ambientLight intensity={0.4} />
-      <pointLight position={[30, 30, 30]} intensity={1.5} color="#ffffff" />
-      <pointLight position={[-30, -30, -30]} intensity={0.8} color="#00a1ff" />
-
-      <BatchEdges edges={visibleEdges} positions={positions} />
-      <InstancedNodes nodes={visibleNodes} positions={positions} onSelect={setSelectedNode} />
-      <ClickHandler nodes={visibleNodes} positions={positions} onSelect={setSelectedNode} />
-
-      <OrbitControls
-        enableDamping
-        dampingFactor={0.05}
-        minDistance={5}
-        maxDistance={150}
-      />
+      <ambientLight intensity={0.2} />
+      <pointLight position={[50, 50, 50]} intensity={2} color="#ffffff" distance={200} />
+      <pointLight position={[-50, -50, -50]} intensity={1.5} color="#00d2ff" distance={200} />
+      <pointLight position={[0, -20, 0]} intensity={2} color="#ff1053" distance={100} />
+      
+      <PhysicsGraph nodes={visibleNodes} edges={visibleEdges} onSelect={setSelectedNode} />
+      
+      <OrbitControls enableDamping dampingFactor={0.03} minDistance={10} maxDistance={150} autoRotate autoRotateSpeed={0.5} />
     </>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Graph3D (exported)
+// Graph3D Export
 // ---------------------------------------------------------------------------
 export default function Graph3D({ nodes, edges }) {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    // Defer heavy render to next frame to avoid blocking navigation
     const id = requestAnimationFrame(() => setReady(true));
     return () => cancelAnimationFrame(id);
   }, []);
 
-  if (!nodes || nodes.length === 0) {
-    return (
-      <div style={{ color: '#8899aa', padding: 40, textAlign: 'center', fontSize: 14 }}>
-        Loading topology data from API...
-      </div>
-    );
-  }
-
-  if (!ready) {
-    return (
-      <div style={{ color: '#8899aa', padding: 40, textAlign: 'center', fontSize: 14 }}>
-        Initializing 3D renderer for {nodes.length.toLocaleString()} nodes...
-      </div>
-    );
-  }
+  if (!nodes || nodes.length === 0) return <div style={{ color: '#8899aa', padding: 40, textAlign: 'center' }}>Loading Cloudscape Matrix...</div>;
+  if (!ready) return <div style={{ color: '#8899aa', padding: 40, textAlign: 'center' }}>Initializing N-Body Physics Simulation...</div>;
 
   return (
     <Canvas
-      camera={{ position: [0, 0, 40], fov: 60 }}
-      gl={{ antialias: false, powerPreference: 'high-performance', toneMapping: THREE.NoToneMapping }}
-      dpr={[1, 1.5]}
-      frameloop="always"
+      camera={{ position: [0, 30, 80], fov: 50 }}
+      gl={{ antialias: true, powerPreference: 'high-performance', alpha: true }}
+      dpr={[1, 2]}
     >
-      <color attach="background" args={['#0a111a']} />
       <Scene nodes={nodes} edges={edges} />
     </Canvas>
   );

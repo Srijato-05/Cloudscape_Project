@@ -1,6 +1,6 @@
 # ==============================================================================
-# PROJECT CLOUDSCAPE: ENTERPRISE TENANT REGISTRY (NEXUS v5.2 TITAN) 
-# THE SUPREME SOVEREIGN-FORENSIC CONFIGURATION MATRIX
+# PROJECT CLOUDSCAPE: ENTERPRISE TENANT REGISTRY (CORE v5.2 CLOUDSCAPE) 
+# THE SUPREME ENTERPRISE CONFIGURATION MATRIX
 # ==============================================================================
 # This registry defines the physical, logical, and cryptographic boundaries of 
 # the multi-account/multi-cloud data mesh. The orchestrator spawns independent 
@@ -12,7 +12,7 @@
 # - environment_type: 'production', 'development', 'sandbox', 'dr', 'finance', 
 #                     'shared-services', 'testing', 'staging', 'mock'
 #
-# 5.2 TITAN CAPABILITIES (ACTIVATED):
+# 5.2 CLOUDSCAPE CAPABILITIES (ACTIVATED):
 # 1. Zero-None Guarantee: All IDs have mathematically stable cryptographic fallbacks.
 # 2. HCS Metadata Flags: Native Risk-Scorer overrides seeded via declarative YAML tags.
 # 3. Compliance Tagging Matrix: CIS v8, PCI-DSS v4.0, HIPAA, and custom frameworks.
@@ -170,7 +170,7 @@ tenants:
       threat_model: "DATA_POISONING_AND_LLM_EXFIL"
       machine_learning_workloads: true
       crown_jewel_paths:
-        - "arn:aws:bedrock:us-west-2:333344445555:custom-model/Titan-Internal"
+        - "arn:aws:bedrock:us-west-2:333344445555:custom-model/Cloudscape-Internal"
 
   # ----------------------------------------------------------------------------
   # [PROJ-OPS-07] CONTAINER ORCHESTRATION FABRIC (NEW)

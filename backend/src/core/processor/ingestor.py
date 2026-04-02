@@ -13,20 +13,20 @@ from dataclasses import dataclass, field
 from collections import deque
 
 try:
-    from neo4j import AsyncGraphDatabase, AsyncDriver, AsyncSession
-    from neo4j.exceptions import TransientError, ServiceUnavailable, ClientError, AuthError
+    from neo4j import AsyncGraphDatabase, AsyncDriver, AsyncSession # type: ignore
+    from neo4j.exceptions import TransientError, ServiceUnavailable, ClientError, AuthError # type: ignore
 except ImportError:
     raise ImportError("Neo4j driver missing. Run: pip install neo4j")
 
-# Core Titan Configuration Bindings
-from core.config import config
+# Core Cloudscape Configuration Bindings
+from core.config import config # type: ignore
 
 # ==============================================================================
-# CLOUDSCAPE NEXUS 5.1 TITAN - DATABASE KERNEL & STREAMING INGESTOR
+# CLOUDSCAPE CORE 5.1 CLOUDSCAPE - DATABASE KERNEL & STREAMING INGESTOR
 # ==============================================================================
-# The Sovereign-Forensic Graph Materialization Engine.
+# The Enterprise Graph Materialization Engine.
 # 
-# TITAN NEXUS 5.1 UPGRADES ACTIVE:
+# CLOUDSCAPE CORE 5.1 UPGRADES ACTIVE:
 # 1. ADAPTIVE MEMORY CHUNKING: Dynamically calculates payload byte-weight and 
 #    shrinks batch sizes in real-time to prevent JVM OOM crashes on Neo4j.
 # 2. DEEP RECURSIVE SERIALIZER 2.0: Safely serializes complex nested Boto3, 
@@ -50,7 +50,7 @@ from core.config import config
 # ------------------------------------------------------------------------------
 
 class IngestionKernelError(Exception):
-    """Base exception for the Titan Database Kernel."""
+    """Base exception for the Cloudscape Database Kernel."""
     pass
 
 class SchemaLockError(IngestionKernelError):
@@ -93,27 +93,28 @@ class SafeDeepSerializer(json.JSONEncoder):
     objects that typically crash `json.dumps`. Provides safe degradation instead 
     of wiping the entire dictionary.
     """
-    def default(self, obj: Any) -> Any:
-        if isinstance(obj, (datetime, date)):
-            return obj.isoformat()
-        if isinstance(obj, set):
-            return list(obj)
-        if isinstance(obj, bytes):
-            return obj.decode('utf-8', errors='replace')
-        if isinstance(obj, uuid.UUID):
-            return str(obj)
-        if hasattr(obj, '__dict__'):
-            return obj.__dict__
-        if str(type(obj).__name__) == "dict_keys":
-            return list(obj)
-        if str(type(obj).__name__) == "dict_values":
-            return list(obj)
+    def default(self, o: Any) -> Any:
+        if isinstance(o, (datetime, date)):
+            return o.isoformat()
+        if isinstance(o, set):
+            return list(o)
+        if isinstance(o, bytes):
+            return o.decode('utf-8', errors='replace')
+        if isinstance(o, uuid.UUID):
+            return str(o)
+        if hasattr(o, '__dict__'):
+            return o.__dict__
+        if str(type(o).__name__) == "dict_keys":
+            return list(o)
+        if str(type(o).__name__) == "dict_values":
+            return list(o)
             
         # Safe Degradation: Fallback to string representation
         try:
-            return str(obj)
+            return str(o)
         except Exception:
             return "[UNSERIALIZABLE_OBJECT]"
+
 
 # ------------------------------------------------------------------------------
 # SUPREME INGESTION KERNEL
@@ -156,7 +157,7 @@ class Neo4jIngestor:
         if self.driver:
             return
 
-        self.logger.info(f"Establishing Async Connection to Titan Graph Kernel at {self.uri}...")
+        self.logger.info(f"Establishing Async Connection to Cloudscape Graph Kernel at {self.uri}...")
         try:
             self.driver = AsyncGraphDatabase.driver(
                 self.uri, 
@@ -166,8 +167,12 @@ class Neo4jIngestor:
                 connection_acquisition_timeout=10.0
             )
             
+            driver = self.driver
+            if driver is None:
+                raise ServiceUnavailable("Driver instantiation failed silently.")
+                
             # Verify connectivity
-            async with self.driver.session() as session:
+            async with driver.session() as session:
                 await session.run("RETURN 1 AS ping")
             
             self.logger.info("  [OK] Graph Kernel Connection Established. Handshake validated.")
@@ -187,8 +192,9 @@ class Neo4jIngestor:
 
     async def close(self) -> None:
         """Gracefully terminates connection pools."""
-        if self.driver:
-            await self.driver.close()
+        driver = self.driver
+        if driver is not None:
+            await driver.close()
             self.logger.info("Graph Kernel connection pool securely closed.")
             self.driver = None
 
@@ -198,10 +204,11 @@ class Neo4jIngestor:
 
     async def _detect_apoc(self) -> None:
         """Queries the DBMS to determine if the APOC plugin is active."""
-        if not self.driver: return
+        driver = self.driver
+        if driver is None: return
         
         try:
-            async with self.driver.session() as session:
+            async with driver.session() as session:
                 result = await session.run("CALL dbms.procedures() YIELD name WHERE name STARTS WITH 'apoc' RETURN count(name) as c")
                 record = await result.single()
                 if record and record["c"] > 0:
@@ -236,8 +243,12 @@ class Neo4jIngestor:
             "CREATE INDEX resource_provider IF NOT EXISTS FOR (n:Resource) ON (n.cloud_provider)"
         ]
 
+        driver = self.driver
+        if driver is None:
+            raise SchemaLockError("Driver is not initialized.")
+            
         try:
-            async with self.driver.session() as session:
+            async with driver.session() as session:
                 for query in statements:
                     await session.run(query)
             self.logger.debug("  [+] Schema constraints injected. Verifying ONLINE status...")
@@ -268,8 +279,12 @@ class Neo4jIngestor:
         max_wait_seconds = 120
         start_wait = time.time()
         
+        driver = self.driver
+        if driver is None:
+            raise SchemaLockError("Driver is not initialized.")
+            
         while time.time() - start_wait < max_wait_seconds:
-            async with self.driver.session() as session:
+            async with driver.session() as session:
                 result = await session.run("SHOW INDEXES YIELD state, type WHERE type <> 'LOOKUP' RETURN state")
                 records = await result.data()
                 
@@ -292,7 +307,11 @@ class Neo4jIngestor:
             "CREATE CONSTRAINT path_id ON (p:AttackPath) ASSERT p.path_id IS UNIQUE",
             "CREATE INDEX resource_type FOR (n:Resource) ON (n.type)"
         ]
-        async with self.driver.session() as session:
+        driver = self.driver
+        if driver is None:
+            return
+            
+        async with driver.session() as session:
             for query in legacy:
                 try:
                     await session.run(query)
@@ -317,7 +336,7 @@ class Neo4jIngestor:
         self.logger.debug(f"[{source}] Processing payload matrix ({len(payloads)} entities)...")
         
         # Determine Routing Path based on Source
-        if source in ["TitanHybridBridge", "DiscoveryEngine"]:
+        if source in ["CloudscapeHybridBridge", "DiscoveryEngine"]:
             # Standard Resource Nodes
             await self._chunked_execution(self._materialize_nodes, payloads, "Nodes")
         elif source == "IdentityFabric":
@@ -345,17 +364,17 @@ class Neo4jIngestor:
         # If objects are massive (e.g. nested IAM policies), shrink the batch.
         sample_size = min(10, total)
         sample_bytes = sum(len(json.dumps(payloads[i], cls=SafeDeepSerializer)) for i in range(sample_size))
-        avg_bytes_per_record = max(1, sample_bytes / sample_size)
+        avg_bytes_per_record = max(1.0, float(sample_bytes) / float(sample_size))
         
         # Target ~2MB per transaction block to prevent JVM heap overflow
-        target_batch_bytes = 2 * 1024 * 1024 
+        target_batch_bytes = 2.0 * 1024.0 * 1024.0
         adaptive_size = max(100, min(self.max_batch_size, int(target_batch_bytes / avg_bytes_per_record)))
         
         if adaptive_size != self.max_batch_size:
             self.logger.debug(f"Adaptive Batching Active: Adjusted size from {self.max_batch_size} to {adaptive_size} due to payload weight.")
 
         for i in range(0, total, adaptive_size):
-            chunk = payloads[i:i + adaptive_size]
+            chunk = [payloads[k] for k in range(i, min(i + adaptive_size, total))]
             self.metrics.chunks_processed += 1
             
             # Deep Serialization and Sanitization
@@ -380,7 +399,10 @@ class Neo4jIngestor:
         attempt = 0
         while attempt < self.max_retries:
             try:
-                async with self.driver.session() as session:
+                driver = self.driver
+                if driver is None:
+                    raise Exception("Driver lost during execution")
+                async with driver.session() as session:
                     await session.execute_write(func, chunk)
                 return # Success
                 
@@ -411,7 +433,7 @@ class Neo4jIngestor:
         Neo4j only accepts primitives and arrays of primitives. 
         Nested dicts MUST be stringified.
         """
-        clean_props = {}
+        clean_props: Dict[str, Any] = {}
         for k, v in raw_data.items():
             # Skip empty or null values to save DB space
             if v is None or v == "":
@@ -426,7 +448,7 @@ class Neo4jIngestor:
                 clean_props[k] = json.dumps(v, cls=SafeDeepSerializer)
                 
         # Track ingestion timestamp
-        clean_props["_titan_last_seen"] = int(time.time())
+        clean_props["_cloudscape_last_seen"] = int(time.time())
         return clean_props
 
     def _sanitize_relation_name(self, name: str) -> str:
@@ -508,13 +530,13 @@ class Neo4jIngestor:
             MERGE (src)-[r:{rel_type}]->(dst)
             SET r.weight = coalesce(edge.weight, 1.0),
                 r.is_identity_bridge = coalesce(edge.is_identity_bridge, false),
-                r._titan_last_seen = timestamp()
+                r._cloudscape_last_seen = timestamp()
             """
             await tx.run(query, batch=batch)
             self.metrics.edges_merged += len(batch)
             
             # Estimate phantom generation (approximate telemetry)
-            self.metrics.phantom_nodes_spawned += len(batch) * 0.05 
+            self.metrics.phantom_nodes_spawned += int(len(batch) * 0.05) 
 
     async def _materialize_paths(self, tx: Any, payloads: List[Dict[str, Any]]) -> None:
         """
@@ -531,7 +553,7 @@ class Neo4jIngestor:
             p.hcs_score = coalesce(path.metadata.hcs_score, 0.0),
             p.hop_count = coalesce(path.metadata.hop_count, 0),
             p.metadata = path.metadata, // Stringified JSON
-            p._titan_last_seen = timestamp()
+            p._cloudscape_last_seen = timestamp()
             
         // 2. Link Source (Entry Point) and Target (Crown Jewel) implicitly for quick queries
         WITH p, path
@@ -584,7 +606,9 @@ class Neo4jIngestor:
         """
         try:
             timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-            dlq_file = os.path.join(self.dlq_path, f"dlq_{timestamp}_{uuid.uuid4().hex[:8]}.json")
+            # Dynamically extract first uuid segment without Pyre-disallowed string slicing
+            segment = str(uuid.uuid4()).split('-')[0]
+            dlq_file = os.path.join(self.dlq_path, f"dlq_{timestamp}_{segment}.json")
             
             data = {
                 "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -611,7 +635,11 @@ class Neo4jIngestor:
         self.logger.warning("EXECUTE PURGE: Wiping database clean...")
         
         try:
-            async with self.driver.session() as session:
+            driver = self.driver
+            if driver is None:
+                raise Exception("Missing database driver")
+                
+            async with driver.session() as session:
                 if self._apoc_available:
                     # Memory-safe batched deletion
                     await session.run("CALL apoc.periodic.iterate('MATCH (n) RETURN n', 'DETACH DELETE n', {batchSize:10000, parallel:false})")
@@ -631,7 +659,7 @@ class Neo4jIngestor:
         m = self.metrics
         report = f"""
 ================================================================================
- 💾 TITAN DATABASE KERNEL (INGESTOR) TELEMETRY
+ 💾 CLOUDSCAPE DATABASE KERNEL (INGESTOR) TELEMETRY
 ================================================================================
  [ DATA UPSERT MATRIX ]
    ├─ Nodes Merged           : {m.nodes_merged}

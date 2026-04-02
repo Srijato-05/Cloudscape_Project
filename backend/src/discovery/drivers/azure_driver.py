@@ -1,15 +1,16 @@
 import os
 import json
-from azure.identity import DefaultAzureCredential, AzureCliCredential
-from azure.mgmt.resource import ResourceManagementClient
-from azure.mgmt.compute import ComputeManagementClient
-from rich.console import Console
+import logging
+from azure.identity import DefaultAzureCredential, AzureCliCredential # type: ignore
+from azure.mgmt.resource import ResourceManagementClient # type: ignore
+from azure.mgmt.compute import ComputeManagementClient # type: ignore
 
-console = Console()
+logger = logging.getLogger(__name__)
 
 class AzureScraper:
     def __init__(self):
-        self.persistence_path = "E:/CloudScape_Data/manifests"
+        # Resolve to standardized repository-relative mount paths
+        self.persistence_path = os.getenv("CLOUDSCAPE_AZURE_MANIFEST_DIR", os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../volume/azure_data")))
         os.makedirs(self.persistence_path, exist_ok=True)
         
         # Identity Logic: Use CLI first for Student Accounts
@@ -22,7 +23,7 @@ class AzureScraper:
             self.resource_client = ResourceManagementClient(self.credential, self.subscription_id)
             self.compute_client = ComputeManagementClient(self.credential, self.subscription_id)
         except Exception as e:
-            console.print(f"[bold red]Critical Auth Failure:[/bold red] {str(e)}")
+            logger.critical(f"Critical Azure Auth Failure: {str(e)}", exc_info=True)
             raise
 
     def fetch_all_resources(self):
@@ -32,7 +33,7 @@ class AzureScraper:
         }
 
         try:
-            console.print("[cyan]→ Scanning Azure Resource Groups...[/cyan]")
+            logger.info("Scanning Azure Resource Groups...")
             for rg in self.resource_client.resource_groups.list():
                 inventory["resource_groups"].append({
                     "name": rg.name,
@@ -41,7 +42,7 @@ class AzureScraper:
                     "tags": rg.tags or {}
                 })
 
-            console.print("[cyan]→ Scanning Azure Virtual Machines...[/cyan]")
+            logger.info("Scanning Azure Virtual Machines...")
             for vm in self.compute_client.virtual_machines.list_all():
                 inventory["virtual_machines"].append({
                     "name": vm.name,
@@ -56,10 +57,10 @@ class AzureScraper:
             with open(output_file, "w") as f:
                 json.dump(inventory, f, indent=4)
             
-            console.print(f"[bold green]✔ Azure Scan Complete.[/bold green] Saved {len(inventory['resource_groups'])} RGs and {len(inventory['virtual_machines'])} VMs.")
+            logger.info(f"Azure Scan Complete. Saved {len(inventory['resource_groups'])} RGs and {len(inventory['virtual_machines'])} VMs.")
             
         except Exception as e:
-            console.print(f"[bold red]Azure Ingestion Error:[/bold red] {str(e)}")
+            logger.error(f"Azure Ingestion Error: {str(e)}", exc_info=True)
 
 if __name__ == "__main__":
     # Unit test for the driver

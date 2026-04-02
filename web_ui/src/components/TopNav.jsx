@@ -8,7 +8,7 @@ export default function TopNav() {
         title: <span className="cloudscape-vibrant-title">CloudSCAPE</span>,
         logo: {
           src: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmZmZmIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PHBhdGggZD0iTTEyIDJMMiA3bDEwIDUgMTAtNS0xMC01ek0yIDE3bDEwIDUgMTAtNU0yIDEybDEwIDUgMTAtNSIvPjwvc3ZnPg==',
-          alt: 'CloudScape Nexus Logo'
+          alt: 'CloudScape Framework Logo'
         }
       }}
       utilities={[
@@ -21,7 +21,7 @@ export default function TopNav() {
         {
           type: 'menu-dropdown',
           text: 'SOC Admin',
-          description: 'Sovereign-Forensic Multi-Cloud Intelligence Mesh · v5.2 Titan',
+          description: 'Enterprise-Grade Multi-Cloud Intelligence Mesh · v5.2 Cloudscape',
           iconName: 'user-profile',
           items: [
             { id: 'settings', text: 'Settings' },

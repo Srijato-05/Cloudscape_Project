@@ -8,7 +8,7 @@ import logging
 from pathlib import Path
 
 # ==============================================================================
-# CLOUDSCAPE NEXUS 5.0 - ENVIRONMENT SANITIZER (SOFT RESET)
+# CLOUDSCAPE CORE 5.0 - ENVIRONMENT SANITIZER (SOFT RESET)
 # ==============================================================================
 # Performs a strict, deterministic tear-down and rebuild of the local Docker mesh.
 # Purges stale volumes, destroys Python bytecode caches, clears forensic logs, 
@@ -41,7 +41,7 @@ class EnvironmentSanitizer:
     def print_banner(self):
         banner = """
     ==================================================================================
-    CLOUDSCAPE NEXUS v5.0.1 | ENVIRONMENT SANITIZER (DETERMINISTIC REPAIR)
+    CLOUDSCAPE CORE v5.0.1 | ENVIRONMENT SANITIZER (DETERMINISTIC REPAIR)
     ==================================================================================
         """
         print("\033[93m" + banner + "\033[0m")

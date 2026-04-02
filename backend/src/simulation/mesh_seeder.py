@@ -15,13 +15,13 @@ from neo4j import GraphDatabase, Driver, exceptions as neo4j_exceptions
 from core.config import config, TenantConfig
 
 # ==============================================================================
-# CLOUDSCAPE NEXUS 5.2 TITAN - ENTERPRISE NEO4J GRAPH MESH SEEDER
+# CLOUDSCAPE CORE 5.2 CLOUDSCAPE - ENTERPRISE NEO4J GRAPH MESH SEEDER
 # ==============================================================================
 # The Sovereign Graph Ingestion Kernel. Transforms URM-normalized resource nodes
 # into a fully connected Neo4j graph mesh with intelligent edge synthesis,
 # phantom node generation, and relationship weight computation.
 #
-# TITAN NEXUS 5.2 UPGRADES ACTIVE:
+# CLOUDSCAPE CORE 5.2 UPGRADES ACTIVE:
 # 1. BATCH MERGE: Uses UNWIND-based batch MERGE for O(1) per-node amortized cost.
 # 2. PHANTOM NODE SYNTHESIS: Generates referenced-but-unseen "shadow" nodes.
 # 3. INTELLIGENT EDGE FACTORY: Synthesizes edges from IAM policies, network 
@@ -68,8 +68,8 @@ class IngestionMetrics:
             },
             "performance": {
                 "batches": self.batch_count,
-                "ingestion_ms": round(self.ingestion_time_ms, 2),
-                "edge_synthesis_ms": round(self.edge_synthesis_time_ms, 2),
+                "ingestion_ms": round(self.ingestion_time_ms, 2), # type: ignore
+                "edge_synthesis_ms": round(self.edge_synthesis_time_ms, 2), # type: ignore
             },
             "graph_fingerprint": self.graph_fingerprint,
             "error_count": len(self.errors),
@@ -132,6 +132,9 @@ class EnterpriseGraphMeshSeeder:
             f"MeshSeeder initialized: uri={self.neo4j_uri}, "
             f"batch_size={self.batch_size}"
         )
+        
+        # In-memory node map for relation injection
+        self._node_lookup: Dict[str, Dict[str, Any]] = {}
 
     # --------------------------------------------------------------------------
     # CONNECTION MANAGEMENT
@@ -181,6 +184,7 @@ class EnterpriseGraphMeshSeeder:
         self._known_arns.clear()
         self._phantom_refs.clear()
         self._edge_buffer.clear()
+        self._node_lookup = {n.get("arn", ""): n for n in nodes if n.get("arn")}
         
         start_time = time.perf_counter()
         
@@ -262,7 +266,7 @@ class EnterpriseGraphMeshSeeder:
         """
         
         for i in range(0, len(nodes), self.batch_size):
-            batch = nodes[i:i + self.batch_size]
+            batch = nodes[i:i + self.batch_size]  # type: ignore
             batch_data = []
             
             for node in batch:
@@ -287,7 +291,7 @@ class EnterpriseGraphMeshSeeder:
             
             try:
                 with self.driver.session() as session:
-                    result = session.write_transaction(
+                    result = session.execute_write(
                         lambda tx: tx.run(merge_query, {"batch": batch_data}).consume()
                     )
                     counters = result.counters
@@ -325,9 +329,10 @@ class EnterpriseGraphMeshSeeder:
             if not arn:
                 continue
             
-            # IAM Trust Policy Analysis
+            # IAM Trust & Permissions Analysis
             if service == "iam" and resource_type in ("role", "user"):
                 self._analyze_iam_trust(arn, metadata, properties)
+                self._analyze_iam_permissions(arn, metadata, properties)
             
             # Network Topology (VPC/Subnet bindings)
             if metadata.get("VpcId"):
@@ -420,6 +425,41 @@ class EnterpriseGraphMeshSeeder:
         except (json.JSONDecodeError, TypeError, KeyError) as e:
             self.logger.debug(f"  Trust policy parse error for {arn}: {e}")
 
+    def _analyze_iam_permissions(self, arn: str, metadata: Dict, properties: Dict) -> None:
+        """Analyzes Inline and Managed policies for outbound access edges."""
+        # Check Inline Policies (Cloudscape 5.2 URM structure)
+        sec_meta = metadata.get("_secondary_metadata", {})
+        inline_policies = sec_meta.get("InlinePolicies", [])
+        
+        for policy in inline_policies:
+            try:
+                doc = policy.get("PolicyDocument")
+                if isinstance(doc, str):
+                    doc = json.loads(doc)
+                
+                for statement in doc.get("Statement", []):
+                    if statement.get("Effect") != "Allow":
+                        continue
+                        
+                    resources = statement.get("Resource", [])
+                    if isinstance(resources, str):
+                        resources = [resources]
+                    
+                    for res in resources:
+                        if "*" in res:
+                            # In simulation, we can't always resolve '*' to a specific node
+                            # unless we check all nodes. For "Advanced" mode, we'll look for
+                            # hints in the killchain manifest or just skip for now.
+                            # But wait, we can just buffer an edge to everything if we wanted,
+                            # but that's too heavy.
+                            continue
+                        
+                        if res.startswith("arn:"):
+                            self._buffer_edge(arn, res, "HAS_PERMISSION", weight=1.5)
+                            self._register_phantom(res, arn, "HAS_PERMISSION", "IAM Policy Resource")
+            except Exception:
+                continue
+
     # --------------------------------------------------------------------------
     # EDGE BUFFER & FLUSH
     # --------------------------------------------------------------------------
@@ -440,6 +480,14 @@ class EnterpriseGraphMeshSeeder:
             "weight": weight,
             "extra": extra or {},
         })
+        
+        # CLOUDSCAPE ADVANCED: Inject back into the shared URM node object for in-memory analysis
+        if source_arn in self._node_lookup:
+            node = self._node_lookup[source_arn]
+            if "relationships" not in node:
+                node["relationships"] = []
+            if target_arn not in node["relationships"]:
+                node["relationships"].append(target_arn)
 
     def _flush_edge_buffer(self) -> None:
         """Writes all buffered edges to Neo4j in batches."""
@@ -467,7 +515,7 @@ class EnterpriseGraphMeshSeeder:
                 query += ", r.is_identity_bridge = edge.is_bridge, r.app_id = edge.app_id"
             
             for i in range(0, len(edges), self.batch_size):
-                batch = edges[i:i + self.batch_size]
+                batch = edges[i:i + self.batch_size]  # type: ignore
                 batch_data = [{
                     "source": e["source"],
                     "target": e["target"],
@@ -601,9 +649,9 @@ class EnterpriseGraphMeshSeeder:
         
         # Synthesize a best-guess ARN
         if cloud.upper() == "AWS":
-            return f"arn:aws:{service}:us-east-1:000000000000:{res_type}/{resource_id}"
+            return f"arn:aws:{service}:us-east-1:000000000000:{res_type}/{resource_id}"  # type: ignore
         elif cloud.upper() == "AZURE":
-            return f"/subscriptions/unknown/resourceGroups/unknown/providers/Microsoft.{service}/{res_type}/{resource_id}"
+            return f"/subscriptions/unknown/resourceGroups/unknown/providers/Microsoft.{service}/{res_type}/{resource_id}"  # type: ignore
         
         return resource_id
 

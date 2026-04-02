@@ -1,9 +1,9 @@
 ================================================================================
-CLOUDSCAPE NEXUS 5.2 TITAN - COMMAND REFERENCE TERMINAL
+CLOUDSCAPE CORE 5.2 CLOUDSCAPE - COMMAND REFERENCE TERMINAL
 ================================================================================
 
 This document serves as the comprehensive execution manual for the
-Sovereign-Forensic Mesh. Ensure you are in the project root and your
+Enterprise Mesh. Ensure you are in the project root and your
 > .\.venv\Scripts\activate.ps1
 
 NOTE: When copying commands, do NOT include the leading "> " character.
@@ -13,7 +13,7 @@ NOTE: When copying commands, do NOT include the leading "> " character.
 ================================================================================
 These scripts manage the entire environment lifecycle (located in `scripts\`).
 
-A. LAUNCH NEXUS
+A. LAUNCH CORE
    Boots the system, validates dependencies, initializes Docker mesh,
    and starts the backend.
    > .\scripts\launch_nexus.ps1

@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-    CloudScape Nexus 5.2 - TITAN HARD RESET (SCORCHED EARTH)
+    CloudScape Core 5.2 - CLOUDSCAPE HARD RESET (SCORCHED EARTH)
 
 .DESCRIPTION
-    Performs absolute annihilation of the CloudScape Nexus state.
+    Performs absolute annihilation of the CloudScape Core state.
     WARNING: THIS IS IRREVERSIBLE.
     
     Features:

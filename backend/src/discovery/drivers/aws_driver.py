@@ -11,7 +11,7 @@ from discovery.engines.base_engine import BaseDiscoveryEngine
 from core.config import config
 
 # ==============================================================================
-# CLOUDSCAPE NEXUS 5.0 - AWS DISCOVERY ENGINE (TITAN EDITION)
+# CLOUDSCAPE CORE 5.0 - AWS DISCOVERY ENGINE (CLOUDSCAPE EDITION)
 # ==============================================================================
 # Enterprise AWS telemetry extraction sensor. 
 # Features Service-Level Fault Isolation, Heavy-Service Deferral, Dynamic 
@@ -27,7 +27,7 @@ class AWSEngine(BaseDiscoveryEngine):
         
         # Deep Boto3 connection parameters. 
         # Retries are stripped here because they are handled strictly by the 
-        # Titan BaseEngine's exponential backoff & jitter circuit breaker.
+        # Cloudscape BaseEngine's exponential backoff & jitter circuit breaker.
         self.boto_config = Config(
             retries={'max_attempts': 0},
             connect_timeout=15,
@@ -63,7 +63,7 @@ class AWSEngine(BaseDiscoveryEngine):
             
             sts_client = boto3.client('sts', config=self.boto_config, **client_kwargs)
             
-            # Utilize the Titan resilient backoff to verify connectivity
+            # Utilize the Cloudscape resilient backoff to verify connectivity
             response = await self.execute_with_backoff(sts_client.get_caller_identity)
             
             self.account_id = response.get('Account', '000000000000')
@@ -105,7 +105,7 @@ class AWSEngine(BaseDiscoveryEngine):
             
             for service_key, meta in sorted_registry:
                 # ==============================================================
-                # TITAN FAULT ISOLATION BARRIER
+                # CLOUDSCAPE FAULT ISOLATION BARRIER
                 # ==============================================================
                 # This try/except prevents a single service crash (e.g. LocalStack 
                 # RDS HTTP 500 Deadlock) from discarding the successfully extracted 
@@ -137,7 +137,7 @@ class AWSEngine(BaseDiscoveryEngine):
         resource_type = meta['resource_type']
         baseline_risk = meta.get('baseline_risk_score', 0.5)
         
-        # [ TITAN MICRO-COOLING INJECTOR ]
+        # [ CLOUDSCAPE MICRO-COOLING INJECTOR ]
         # Give the Docker daemon a physical CPU breather before firing heavy forks.
         if self.mode == "MOCK" and "rds" in service_key.lower():
             self.logger.debug(f"Injecting micro-cooling delay before heavy execution: {service_key}")

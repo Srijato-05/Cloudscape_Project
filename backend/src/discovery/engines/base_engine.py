@@ -18,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 from core.config import config
 
 # ==============================================================================
-# CLOUDSCAPE NEXUS 5.2 TITAN - BASE DISCOVERY ENGINE (SUPREME EDITION)
+# CLOUDSCAPE CORE 5.2 CLOUDSCAPE - BASE DISCOVERY ENGINE (SUPREME EDITION)
 # ==============================================================================
 # The abstract foundation for all Cloud Extraction Sensors. Implements:
 #

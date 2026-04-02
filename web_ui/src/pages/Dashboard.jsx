@@ -46,7 +46,7 @@ export default function Dashboard() {
 
   return (
     <ContentLayout
-      header={<Header variant="h1" description="Sovereign-Forensic Multi-Cloud Intelligence Mesh · Nexus 5.2 Titan · MOCK Mode">Mission Control Dashboard</Header>}
+      header={<Header variant="h1" description="Enterprise-Grade Multi-Cloud Intelligence Mesh · Framework 5.2 Cloudscape · MOCK Mode">Mission Control Dashboard</Header>}
     >
       <SpaceBetween size="l">
         <Grid
@@ -88,7 +88,7 @@ export default function Dashboard() {
                 { id: 'type', header: 'Event', cell: e => e.type || 'Unknown' },
                 { id: 'resource', header: 'Resource', cell: e => e.resource || 'N/A' }
               ]}
-              items={securityEvents.slice(0, 5)}
+              items={securityEvents}
               empty={
                 <Box margin={{ vertical: "xs" }} textAlign="center" color="inherit">
                   <SpaceBetween size="m">

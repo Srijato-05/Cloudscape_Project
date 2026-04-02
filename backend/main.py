@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-CLOUDSCAPE NEXUS 5.2 TITAN — MAIN ENTRY POINT (SUPREME EDITION)
+CLOUDSCAPE CORE 5.2 CLOUDSCAPE — MAIN ENTRY POINT (SUPREME EDITION)
 ================================================================
-The Sovereign-Forensic Multi-Cloud Intelligence Mesh.
+The Enterprise Multi-Cloud Intelligence Mesh.
 
 This module serves as the primary execution gateway, bootstrapping:
 - Safe encoding for cross-platform Unicode stability
@@ -13,7 +13,7 @@ This module serves as the primary execution gateway, bootstrapping:
 - Argument parsing for operational modes
 - AsyncIO event loop management with Windows compatibility
 
-TITAN 5.2 FIXES:
+CLOUDSCAPE 5.2 FIXES:
 1. WINDOWS COMPATIBILITY: SIGTERM handling uses try/except, os.statvfs replaced.
 2. ENCODING SAFETY: apply_safe_encoding_lock uses function scope, not module-level.
 3. GRACEFUL SHUTDOWN: Proper async cleanup with timeout for hung tasks.
@@ -25,7 +25,7 @@ import sys
 from pathlib import Path
 
 # ==============================================================================
-# TITAN BOOTLOADER PATH INJECTION
+# BOOTLOADER PATH INJECTION
 # ==============================================================================
 # Inject the src/ directory into the python path to resolve all modules natively
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
@@ -38,6 +38,7 @@ import asyncio
 import argparse
 import platform
 import traceback
+import json
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 
@@ -46,6 +47,10 @@ from rich.panel import Panel  # type: ignore
 from rich.text import Text  # type: ignore
 from rich.table import Table  # type: ignore
 from rich import box  # type: ignore
+from rich.traceback import install # type: ignore
+
+# Install Global Advanced Traceback Hooks
+install(show_locals=True, width=120, word_wrap=True)
 
 console = Console()
 
@@ -138,7 +143,7 @@ def initialize_logging(log_level: str = "INFO", log_to_file: bool = True) -> log
 # PROCESS MANAGEMENT & SIGNAL HANDLING
 # ==============================================================================
 
-class TitanProcessManager:
+class CloudscapeProcessManager:
     """
     Manages the application lifecycle, signal handling, and graceful shutdown.
     
@@ -223,7 +228,7 @@ class HealthCheckRunner:
         all_passed &= self._check_config_integrity()
         
         # Summary Table
-        table = Table(title="[bold cyan]Pre-Flight Health Checks[/bold cyan]", border_style="cyan", box=box.MINIMAL)
+        table = Table(title="Pre-Flight Health Checks", border_style="cyan", box=box.MINIMAL)
         table.add_column("System Check", style="magenta", no_wrap=True)
         table.add_column("Status", style="bold")
         table.add_column("Details", style="dim")
@@ -325,17 +330,17 @@ class HealthCheckRunner:
 # ==============================================================================
 
 def build_argument_parser() -> argparse.ArgumentParser:
-    """Builds the main argument parser for the Cloudscape Nexus CLI."""
+    """Builds the main argument parser for the Cloudscape Core CLI."""
     parser = argparse.ArgumentParser(
-        description="Cloudscape Nexus 5.2 Titan — Sovereign-Forensic Multi-Cloud Intelligence Mesh",
+        description="Cloudscape - Cloud Security and Discovery Framework",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 ╔══════════════════════════════════════════════════════════════╗
-║  CLOUDSCAPE NEXUS 5.2 TITAN — OPERATIONAL MODES            ║
+║  CLOUDSCAPE - OPERATIONAL MODES                              ║
 ╠══════════════════════════════════════════════════════════════╣
 ║  SCAN:    Execute full discovery pipeline (default)         ║
 ║  DAEMON:  Continuous scan loop with configurable interval   ║
-║  REPORT:  Generate forensic report from latest scan         ║
+║  REPORT:  Generate security report from latest scan         ║
 ║  HEALTH:  Run pre-flight health checks only                 ║
 ║  SCHEMA:  Apply database schema constraints                 ║
 ╚══════════════════════════════════════════════════════════════╝
@@ -368,30 +373,14 @@ Examples:
         "--api", action="store_true",
         help="Launch the internal React frontend API overlay server"
     )
-    parser.add_argument(
-        "--health", action="store_true",
-        help="Run pre-flight health checks and exit"
-    )
-    parser.add_argument(
-        "--schema", action="store_true",
-        help="Apply Neo4j enterprise schema constraints and exit"
-    )
-    parser.add_argument(
-        "--verbose", "-v", action="store_true",
-        help="Enable DEBUG-level logging"
-    )
-    parser.add_argument(
-        "--no-simulation", action="store_true",
-        help="Disable synthetic APT topology generation"
-    )
-    parser.add_argument(
-        "--tenant", type=str, default=None,
-        help="Process only a specific tenant by ID"
-    )
-    parser.add_argument(
-        "--report", action="store_true",
-        help="Generate forensic report from latest scan data"
-    )
+    parser.add_argument("--timeline", action="store_true", help="Reconstruct forensic timeline from ledger")
+    parser.add_argument("--health", action="store_true", help="Run local health diagnostics")
+    parser.add_argument("--verbose-trace", action="store_true", help="Enable bit-level diagnostic tracing")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable DEBUG-level logging")
+    parser.add_argument("--no-simulation", action="store_true", help="Disable synthetic topology generation")
+    parser.add_argument("--tenant", type=str, default=None, help="Process specific tenant ID")
+    parser.add_argument("--report", action="store_true", help="Generate forensic report")
+    parser.add_argument("--schema", action="store_true", help="Apply database schema constraints")
     
     return parser
 
@@ -419,7 +408,7 @@ async def run_pipeline(args: argparse.Namespace, logger: logging.Logger) -> None
     orchestrator = CloudScapeOrchestrator(cfg)
     
     # Register with process manager for signal handling
-    process_manager = TitanProcessManager()
+    process_manager = CloudscapeProcessManager()
     process_manager.set_orchestrator(orchestrator)
     
     try:
@@ -442,7 +431,9 @@ async def run_pipeline(args: argparse.Namespace, logger: logging.Logger) -> None
                 # Log cycle summary
                 total_nodes = sum(s.merged_nodes_produced for s in states)
                 total_errors = sum(len(s.errors) for s in states)
-                logger.info(f"Cycle {cycle} complete. Nodes: {total_nodes}, Errors: {total_errors}")
+                total_vulns = sum(s.vulnerabilities_discovered for s in states)
+                total_threats = sum(s.critical_threats_detected for s in states)
+                logger.info(f"Cycle {cycle} complete. Nodes: {total_nodes}, Vulns: {total_vulns}, Threats: {total_threats}, Errors: {total_errors}")
                 
                 if not orchestrator._shutdown_requested:
                     logger.info(f"Sleeping {args.interval}s until next cycle...")
@@ -457,26 +448,82 @@ async def run_pipeline(args: argparse.Namespace, logger: logging.Logger) -> None
             states = await orchestrator.run_full_pipeline()
             
             # Print scan summary
-            table = Table(title="[bold cyan]Forensic Extraction Summary[/bold cyan]", border_style="cyan", box=box.MINIMAL)
+            table = Table(title="Scan Summary", border_style="cyan", box=box.MINIMAL)
             table.add_column("Tenant", style="magenta", no_wrap=True)
             table.add_column("Status", style="bold")
             table.add_column("Duration (ms)", justify="right", style="green")
             table.add_column("Nodes Discovered", justify="right", style="yellow")
+            table.add_column("CVSS Histogram", justify="center")
             table.add_column("Errors", justify="right", style="red")
             
+            top_threats = []
+
             for state in states:
                 summary = state.to_dict()
                 status_color = "[green]SUCCESS[/green]" if not summary['errors'] else "[red]WARNING/ERROR[/red]"
+                inte = summary.get('intelligence', {})
+                hist = inte.get('cvss_histogram', {})
+                threats = inte.get('findings', [])
+                top_threats.extend(threats)
+                
+                # Format histogram: [red]C: X[/red] [yellow]H: Y[/yellow] [blue]M: Z[/blue]
+                hist_str = f"[bold red]C: {hist.get('CRITICAL', 0)}[/bold red] | [yellow]H: {hist.get('HIGH', 0)}[/yellow] | [blue]M: {hist.get('MEDIUM', 0)}[/blue] | [white]L: {hist.get('LOW', 0)}[/white]"
+                
                 table.add_row(
                     state.tenant_id,
                     status_color,
                     f"{summary['total_duration_ms']:.0f}",
                     str(summary['nodes'].get('merged', 0)),
+                    hist_str,
                     str(len(summary['errors']))
                 )
             
             console.print()
             console.print(table)
+            console.print()
+            
+            if top_threats:
+                matrix = Table(title="Semantic Security Findings Matrix", border_style="red", box=box.DOUBLE)
+                matrix.add_column("Resource ARN", style="cyan", overflow="fold")
+                matrix.add_column("Rule / CVE", style="magenta")
+                matrix.add_column("Severity", style="bold red", justify="center")
+                matrix.add_column("Description", style="white", overflow="fold", ratio=2)
+                matrix.add_column("Blast Radius", style="bold yellow", justify="center")
+                matrix.add_column("Remediation", style="green", overflow="fold", ratio=2)
+                
+                for t in top_threats: # pyre-ignore[6]
+                    r_id = t.get("cve_id") or t.get("rule") or t.get("framework") or t.get("id", "UNKNOWN")
+                    matrix.add_row(
+                        str(t.get("resource_arn", "UNKNOWN")),
+                        str(r_id),
+                        str(t.get("severity", "CRITICAL")),
+                        str(t.get("description", "No description provided.")),
+                        f"{t.get('blast_radius', 0.0):.1f}",
+                        str(t.get("remediation", "Investigate logic flows and implement secure boundaries."))
+                    )
+                console.print(matrix)
+                
+            # System Component Profiling (MICRO-CHRONOMETRY)
+            profiling = Table(title="System Component Profiling", border_style="blue", box=box.HORIZONTALS)
+            profiling.add_column("Component", style="cyan")
+            profiling.add_column("Stage ID", style="magenta")
+            profiling.add_column("Latency (ms)", justify="right")
+            profiling.add_column("Status", justify="center")
+            
+            for state in states: # pyre-ignore[16]
+                for stage_id, phase in state.phase_metrics.items(): # pyre-ignore[16]
+                    status_style = "bold green" if phase.status.value == "SUCCESS" else "bold red"
+                    profiling.add_row(
+                        f"[{state.tenant_id}]", # pyre-ignore[16]
+                        stage_id,
+                        f"{phase.duration_ms:.2f}",
+                        f"[{status_style}]{phase.status.value}[/{status_style}]"
+                    )
+            
+            console.print()
+            console.print(profiling)
+            console.print(f"\n[bold blue]CLOUDSCAPE V15.0 EXECUTED IN {sum(s.total_duration_ms for s in states):.2f}ms TOTAL[/bold blue]") # pyre-ignore[16]
+            console.print()
             
         if args.api:
             logger.info("API Overlay initialized. Keeping main thread alive. Press Ctrl+C to shutdown.")
@@ -516,7 +563,7 @@ async def run_schema_init(logger: logging.Logger) -> None:
 def main() -> None:
     """
     The Supreme Entry Point.
-    Bootstraps the entire Cloudscape Nexus 5.2 Titan system.
+    Bootstraps the entire Cloudscape Core 5.2 Cloudscape system.
     """
     # PHASE 1: Encoding Safety (function scope, not module level)
     apply_safe_encoding_lock()
@@ -532,36 +579,31 @@ def main() -> None:
     log_level = "DEBUG" if args.verbose else "INFO"
     logger = initialize_logging(log_level=log_level)
     
-    # Banner
-    banner_ascii = r"""
-   ██████╗ ██╗      ██████╗ ██╗   ██╗ ██████╗  ███████╗  ██████╗  █████╗  ██████╗  ███████╗
-  ██╔════╝ ██║     ██╔═══██╗██║   ██║ ██╔══██╗ ██╔════╝ ██╔════╝ ██╔══██╗ ██╔══██╗ ██╔════╝
-  ██║      ██║     ██║   ██║██║   ██║ ██║  ██║ ███████╗ ██║      ███████║ ██████╔╝ █████╗  
-  ██║      ██║     ██║   ██║██║   ██║ ██║  ██║ ╚════██║ ██║      ██╔══██║ ██╔═══╝  ██╔══╝  
-  ╚██████╗ ███████╗╚██████╔╝╚██████╔╝ ██████╔╝ ███████║ ╚██████╗ ██║  ██║ ██║      ███████╗
-   ╚═════╝ ╚══════╝ ╚═════╝  ╚═════╝  ╚═════╝  ╚══════╝  ╚═════╝ ╚═╝  ╚═╝ ╚═╝      ╚══════╝
-                        N E X U S   5 . 2   T I T A N
-               A SOVEREIGN-FORENSIC MULTI-CLOUD INTELLIGENCE MESH
-"""
-    banner_panel = Panel(
-        Text(banner_ascii, style="bold cyan", justify="center"),
-        border_style="magenta",
-        padding=(1, 2),
-        expand=False,
-        box=box.MINIMAL
-    )
-    console.print(banner_panel)
-    
-    logger.info("[bold cyan]Initializing Sovereign-Forensic Engine...[/bold cyan]")
-    logger.info(f"[magenta]Platform:[/magenta] {platform.system()} {platform.release()}")
-    logger.info(f"[magenta]Python:[/magenta] [yellow]{sys.version.split()[0]}[/yellow]")
-    logger.info(f"[magenta]Time:[/magenta] [green]{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}[/green]")
-    
-    # PHASE 5: Health Checks (if requested or always as pre-flight)
-    health = HealthCheckRunner()
+    # Enable Verbose Tracing if requested
+    if args.verbose_trace:
+        from utils.verbose_logger import diagnostic_tracer
+        os.environ["VERBOSE_DIAGNOSTIC"] = "1"
+        console.print("[bold cyan]Bit-level Diagnostic Tracing: ENABLED[/bold cyan]")
+
+    # PHASE 5: Health & Special Modes
     if args.health:
-        health.run_all_checks()
-        sys.exit(0 if health.checks_failed == 0 else 1)
+        from utils.health import HealthMonitor
+        monitor = HealthMonitor({})
+        report = monitor.run_preflight_checks()
+        console.print(Panel(json.dumps(report, indent=2), title="[bold green]Health Diagnostic Report[/bold green]"))
+        sys.exit(0 if report["overall_status"] == "HEALTHY" else 1)
+        
+    if args.timeline:
+        from simulation.simulation_studio import SimulationStudio
+        from core.forensics import forensic_ledger, TimelineReconstructor
+        reconstructor = TimelineReconstructor(forensic_ledger)
+        # Assuming a default or latest scan_id for demo
+        timeline = reconstructor.playback_scan("SIM-MOCK-SCAN")
+        console.print(Panel(json.dumps(timeline, indent=2), title="[bold yellow]Forensic Timeline Playback[/bold yellow]"))
+        sys.exit(0)
+    
+    # General Pre-flight
+    health = HealthCheckRunner()
     
     # Non-blocking health check for pipeline mode
     if not health.run_all_checks():
@@ -587,7 +629,7 @@ def main() -> None:
         logger.debug(traceback.format_exc())
         sys.exit(1)
     
-    logger.info("Cloudscape Nexus 5.2 Titan shutdown complete.")
+    logger.info("Cloudscape shutdown complete.")
 
 
 if __name__ == "__main__":

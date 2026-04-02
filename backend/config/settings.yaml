@@ -1,8 +1,8 @@
 # ==============================================================================
-# CLOUDSCAPE NEXUS 5.0 TITAN - MASTER CONFIGURATION REGISTRY
+# CLOUDSCAPE CORE 5.0 CLOUDSCAPE - MASTER CONFIGURATION REGISTRY
 # ==============================================================================
 # Schema-Perfected for Pydantic Strict Validation (core/config.py).
-# Upgraded with the "Titan Anti-Saturation Throttle" to protect local Docker 
+# Upgraded with the "Cloudscape Anti-Saturation Throttle" to protect local Docker 
 # emulators from thread-exhaustion and HTTP 500 InternalFailures.
 # ==============================================================================
 
@@ -10,10 +10,10 @@
 # CORE SYSTEM DIRECTIVES
 # ------------------------------------------------------------------------------
 app_metadata:
-  name: "CloudScape Nexus Titan"
-  version: "5.2.0"
-  author: "Aether Engine"
-  description: "Enterprise Multi-Cloud Graph Discovery & Intelligence Fabric"
+  name: "Cloudscape"
+  version: "15.0.0"
+  author: "Enterprise-Aether"
+  description: "Apex autonomous cyber-warfare and security architecture"
   environment: "MOCK"
 
 execution_mode: "MOCK"
@@ -78,8 +78,9 @@ forensics:
 # HEURISTIC & SIMULATION ENGINES
 # ------------------------------------------------------------------------------
 logic_engine:
+  singularity_engine: true
   risk_threshold: 0.7
-  max_depth: 5
+  max_depth: 20
   risk_scoring:
     enabled: true
     public_exposure_penalty: 25.0
@@ -119,10 +120,10 @@ crawling:
   rate_limit_calls_per_sec: 10.0    # DECREASED: Smoothes out the API burst
   verify_ssl: true
   max_worker_threads: 5             # DECREASED: Restricts physical CPU threads
-  user_agent: "CloudScape-Nexus-Titan/5.0"
+  user_agent: "CloudScape-Core-Cloudscape/5.0"
 
 # ------------------------------------------------------------------------------
-# SERVICE EXTRACTION REGISTRY (TITAN BASELINE)
+# SERVICE EXTRACTION REGISTRY (CLOUDSCAPE BASELINE)
 # ------------------------------------------------------------------------------
 service_registry:
   aws:

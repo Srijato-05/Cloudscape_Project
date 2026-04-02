@@ -7,12 +7,12 @@ from typing import Optional
 
 
 # ==============================================================================
-# CLOUDSCAPE NEXUS 5.2 TITAN - PORTABLE ENVIRONMENT VALIDATOR
+# CLOUDSCAPE CORE 5.2 CLOUDSCAPE - PORTABLE ENVIRONMENT VALIDATOR
 # ==============================================================================
 # Platform-agnostic workspace validation utility. Ensures the runtime
 # environment is correctly configured before pipeline ignition.
 #
-# TITAN 5.2 UPGRADES:
+# CLOUDSCAPE 5.2 UPGRADES:
 # 1. REMOVED HARDCODED DRIVE LETTERS: No longer assumes D:/E: Windows layout.
 # 2. PLATFORM DETECTION: Auto-detects OS and adjusts validation accordingly.
 # 3. GRACEFUL FALLBACK: Uses logging instead of hard sys.exit on non-critical.

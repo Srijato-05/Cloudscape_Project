@@ -1,5 +1,5 @@
 # ==============================================================================
-# CLOUDSCAPE NEXUS 5.2 TITAN
+# CLOUDSCAPE CORE 5.2 CLOUDSCAPE
 # ==============================================================================
 # Generated from: .\.venv\Scripts\pip freeze
 # Last Updated:   2026-03-16

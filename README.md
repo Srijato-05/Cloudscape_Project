@@ -1,96 +1,48 @@
-# CloudScape Nexus 5.2 Titan
-**Sovereign-Forensic Multi-Cloud Intelligence Mesh**
+# Cloudscape
+**Apex Autonomous Cyber-Warfare & Security Architecture**
 
-![Version](https://img.shields.io/badge/Version-5.2.0-00FF41)
-![Status](https://img.shields.io/badge/Status-Production_Ready-blue)
-![Architecture](https://img.shields.io/badge/Architecture-Decoupled_Microservices-orange)
+![Version](https://img.shields.io/badge/Version-15.0.0-00FF41)
+![Status](https://img.shields.io/badge/Status-Apex_Sovereign-red)
+![Security](https://img.shields.io/badge/Security-Absolute_Enclave-blue)
 
 ## Executive Summary
-CloudSCAPE Titan is a multi-tenant Cloud Detection and Response (CDR) engine. It utilizes a **Recursive Graph-Correlation Fabric** backed by Neo4j to concurrently ingest multiple isolated cloud environments (AWS/Azure) directly or via emulators (LocalStack/Azurite), discovering hidden cross-account attack paths — specifically IAM Identity Trusts, VPC Peerings, and RBAC vulnerabilities.
+Cloudscape Intelligence Matrix is a next-generation autonomous security layer designed for extreme-scale multi-cloud environments. It moves beyond passive detection into **Autonomous Threat Synthesis and Formal Verification**. Powered by Metropolis-Hastings MCMC, Generative Adversarial Networks (GANs), and Advanced Superposition pathfinding, it calculates blast radii as collapsed probability waveforms and verifies security policies with formal SMT solvers.
 
-## Project Structure
+## Core Intelligence Engines
 
-```
-Cloudscape_Project/
-├── backend/                        # Python Backend Engine
-│   ├── main.py                     # Entry point (--api for REST server)
-│   ├── config/                     # settings.yaml, tenants.yaml
-│   ├── src/
-│   │   ├── api/server.py           # aiohttp REST API (port 4000)
-│   │   ├── core/                   # Orchestrator, RBAC, correlation
-│   │   ├── discovery/              # AWS/Azure async extraction
-│   │   ├── intelligence/           # Risk scoring, policy engine
-│   │   ├── simulation/             # Mock data (state_factory, seeders)
-│   │   └── utils/                  # DB tools, logger, config loader
-│   ├── data/                       # Manifests & temp data
-│   ├── forensics/                  # BSON ledger, logs, reports, snapshots
-│   └── scripts/soft_reset.py
-│
-├── web_ui/                         # React Frontend (Vite)
-│   ├── index.html
-│   ├── package.json
-│   ├── vite.config.js
-│   └── src/
-│       ├── App.jsx / main.jsx      # App shell & routing
-│       ├── index.css / App.css     # Global styles
-│       ├── components/             # Graph3D, NodePanel, TopNav, SideNav
-│       ├── pages/                  # Dashboard, InfrastructureMap, BlastRadius, etc.
-│       ├── services/               # api.js (Axios), websocket.js
-│       └── stores/                 # useStore.js (Zustand state)
-│
-├── scripts/                        # PowerShell launch & reset scripts
-├── volume/                         # Docker volume mounts (Neo4j, Redis, etc.)
-├── docker-compose.yml              # Container mesh definition
-├── requirements.txt                # Python dependencies (min versions)
-├── requirements_env.txt            # Frozen pip environment snapshot
-└── run.txt                         # Full command reference manual
-```
+| Engine | Technology | Purpose |
+|--------|------------|---------|
+| **Risk Scorer** | Metropolis-Hastings MCMC | Probabilistic threat density modeling via random walks. |
+| **Critical Matrix** | Advanced Token Decay | Simulating temporal instability in STS credentials. |
+| **Zero-Trust Synthesizer** | SymPy SMT Verifier | Formal algebraic proof of security policy satisfiability. |
+| **Killchain Synthesizer** | Adversarial GANs | Synthesizing net-new zero-day attack vectors to bridge gaps. |
+| **Blast Radius Simulator** | Advanced Superposition | Evaluating lateral movement as parallel probability states. |
+| **Safety Kernel** | SHA3-512 Enclave | Cryptographic runtime integrity and low-level socket trapping. |
 
 ## Quick Start
 
-### 1. Backend
+### 1. Requirements
+Ensure you have the latest high-performance dependencies:
 ```powershell
-.\.venv\Scripts\activate.ps1
+pip install -r requirements.txt
+```
+
+### 2. Ignition (Backend)
+```powershell
 python backend/main.py --mode MOCK --api
 ```
-The API server starts on **http://localhost:4000**.
+The Cloudscape entry point bootstraps the advanced pipeline and initiates the absolute safety enclave.
 
-### 2. Frontend
+### 3. Visual Intelligence (Frontend)
 ```powershell
 cd web_ui
-npm install          # first time only
+npm install
 npm run dev -- --port 5176
 ```
-Open **http://localhost:5176** in your browser.
+Open **http://localhost:5176** to observe the 11-D manifold in real-time.
 
-### 3. Docker Services (optional, for HYBRID/LIVE modes)
-```powershell
-docker compose up -d
-```
-
-## API Endpoints
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/graph` | GET | Full graph topology (nodes + edges) |
-| `/api/assets` | GET | Asset inventory listing |
-| `/api/blast-radius/:id` | GET | Blast radius from a specific node |
-
-## Operational Modes
-| Mode | Description |
-|------|-------------|
-| **MOCK** | Synthetic environment. No Docker required. Fast testing. |
-| **LIVE** | Production extraction. Connects to real AWS/Azure. |
-| **HYBRID** | Emulated deployment. Connects to LocalStack/Azurite. |
-
-## Frontend Pages
-| Page | Path | Description |
-|------|------|-------------|
-| Mission Dashboard | `/` | Security overview with metrics & charts |
-| Multi-Cloud Topology | `/map` | Interactive 3D infrastructure graph |
-| Blast Radius Engine | `/blast-radius` | APT kill chain impact analysis |
-| Forensic Timeline | `/timeline` | State snapshot time-travel |
-| Security Events | `/events` | Live alerts & drift detections |
+## Safety & Ethics
+The Cloudscape 15.0 architecture is governed by an **Absolute Safety Kernel**. It categorically traps all mutating API calls into a cryptographically sealed sandbox. It uses low-level socket patching to physically prevent supply-chain exfiltration, ensuring that the Intelligence Matrix remains a defensive fortress.
 
 ---
-
-*CloudSCAPE Titan: "Visibility is absolute. Trust is an edge."*
+*"Visibility is absolute. Trust is a vulnerability."*

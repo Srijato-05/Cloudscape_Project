@@ -1,5 +1,5 @@
 # ==============================================================================
-# CLOUDSCAPE NEXUS 5.2 TITAN - ENTERPRISE DEPENDENCIES
+# CLOUDSCAPE CORE 5.2 - ENTERPRISE DEPENDENCIES
 # ==============================================================================
 # This file defines the strict cryptographic, network, and cloud-provider 
 # SDK versions required to operate the multi-cloud graph extraction mesh.
@@ -85,13 +85,44 @@ aiohappyeyeballs==2.6.1
 # ------------------------------------------------------------------------------
 # 7. AWS EXTRACTION FABRIC (boto3)
 # ------------------------------------------------------------------------------
-<<<<<<< HEAD
 # Bound together to ensure paginator, Universal Resource Mapping (URM) stability,
 # and high-speed multi-threaded S3 object chunking.
 boto3==1.42.68
 botocore==1.42.68
 s3transfer==0.16.0
 jmespath==1.1.0
+
+# ------------------------------------------------------------------------------
+# 8. SYMPY FORMAL VERIFICATION & MATHEMATICS
+# ------------------------------------------------------------------------------
+# Powers the SAT/SMT policy verifier and complex physics simulations.
+sympy>=1.13.0
+mpmath>=1.3.0
+
+# ------------------------------------------------------------------------------
+# 9. TESTING & QUALITY ASSURANCE
+# ------------------------------------------------------------------------------
+pytest>=8.0.0
+pytest-asyncio>=0.23.5
+coverage>=7.4.0
+pytest-cov>=4.1.0
+moto[all]>=5.0.0
+pyright>=1.1.350
+
+# ------------------------------------------------------------------------------
+# 8. TERMINAL, LOGGING, & VISUALIZATION
+# ------------------------------------------------------------------------------
+rich>=13.9.0
+colorama>=0.4.6
+
+# ------------------------------------------------------------------------------
+# 9. FRONTEND (React/Vite) — managed via web_ui/package.json
+# ------------------------------------------------------------------------------
+# The React frontend dependencies (react, react-three/fiber, 
+# @cloudscape-design/components, zustand, axios, etc.) are managed
+# separately in web_ui/package.json via npm.
+# To install frontend dependencies:
+#   cd web_ui && npm install
 
 # ------------------------------------------------------------------------------
 # 8. AZURE CORE IDENTITY & AUTHENTICATION
@@ -132,7 +163,7 @@ azure-storage-blob==12.28.0
 # ------------------------------------------------------------------------------
 # 11. DATA VALIDATION & TYPE COERCION (Pydantic)
 # ------------------------------------------------------------------------------
-# Ensures incoming cloud API data conforms to strict Nexus schematics.
+# Ensures incoming cloud API data conforms to strict Core schematics.
 pydantic==2.12.5
 pydantic-settings==2.13.1
 pydantic_core==2.41.5
@@ -286,14 +317,6 @@ six==1.17.0
 tenacity==8.5.0
 watchdog==4.0.0
 wcwidth==0.6.0
-PyJWT==2.11.0
-=======
-pyright>=1.1.350
-
-# ------------------------------------------------------------------------------
-# 8. TERMINAL, LOGGING, & VISUALIZATION
-# ------------------------------------------------------------------------------
-rich>=13.9.0
 colorama>=0.4.6
 
 # ------------------------------------------------------------------------------
