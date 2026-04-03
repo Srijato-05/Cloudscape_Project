@@ -552,24 +552,39 @@ class ConfigurationManager:
         self.config_dir = self.base_dir / "backend" / "config"
         self.registry_dir = self.base_dir / "backend" / "config"
         
-        # Early Logging Bootstrap (Dual-Track: Console + persistent Audit Log)
+        # Early Logging Bootstrap (Dual-Track: Console + persistent Markdown Audit)
         log_format = "%(asctime)s | %(levelname)-8s | %(name)-35s | %(message)s"
         
         # Unify reporting to the project root repository
         report_dir = self.base_dir / "reports"
         report_dir.mkdir(exist_ok=True)
-        audit_log = report_dir / "execution_audit.log"
+        audit_md = report_dir / "execution_audit.md"
         
-        logging.basicConfig(
-            level=logging.INFO,
-            format=log_format,
-            handlers=[
-                logging.StreamHandler(sys.stdout),
-                logging.FileHandler(audit_log, mode='a', encoding='utf-8')
-            ]
-        )
+        # Ensure the file starts with a clean Markdown header if being newly created or appended
+        with open(audit_md, 'a', encoding='utf-8') as f:
+            f.write(f"\n# CLOUDSCAPE EXECUTION AUDIT - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write("```text\n")
+
+        # Explicitly configure the root logger handlers to prevent initialization bypass
+        root_logger = logging.getLogger()
+        root_logger.setLevel(logging.INFO)
+        
+        # Clean existing handlers to avoid duplicates (using list() to prevent iterator modification issues)
+        for handler in list(root_logger.handlers):
+            root_logger.removeHandler(handler)
+            
+        # Add Console Handler
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setFormatter(logging.Formatter(log_format))
+        root_logger.addHandler(console_handler)
+        
+        # Add Markdown File Handler (Forced Flush for Windows stability)
+        file_handler = logging.FileHandler(audit_md, mode='a', encoding='utf-8')
+        file_handler.setFormatter(logging.Formatter(log_format))
+        root_logger.addHandler(file_handler)
+        
         self.logger = logging.getLogger("CloudScape.Core.Config")
-        self.logger.info(f"Audit Log established at: {audit_log}")
+        self.logger.info(f"Forensic Audit Matrix established at: {audit_md}")
         
         # State Containers
         self.settings: Optional[Settings] = None

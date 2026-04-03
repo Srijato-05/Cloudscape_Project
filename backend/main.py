@@ -598,22 +598,26 @@ async def run_pipeline(args: argparse.Namespace, logger: logging.Logger) -> None
         logger.critical(f"Fatal pipeline error: {e}")
         logger.debug(traceback.format_exc())
     finally:
-        # Final HTML Export & Audit Notification
+        # Final HTML & Markdown Export & Audit Notification
         try:
             report_path = "reports/security_findings_LATEST.html"
-            audit_log = "reports/execution_audit.log"
+            audit_md = "reports/execution_audit.md"
+            
+            # Close the Markdown code block before finalizing the report
+            with open(audit_md, 'a', encoding='utf-8') as f:
+                f.write("```\n")
             
             # Save the off-screen high-fidelity buffer
             html_console.save_html(report_path)
             
             console.print(f"\n[bold green]➜ SUPREME DIAGNOSTIC ASSETS EXPORTED:[/bold green]")
             console.print(f"  • [white]High-Fidelity HTML Report:[/white] [blue underline]file://{Path(report_path).resolve()}[/blue underline] [dim](Separate Window Analysis)[/dim]")
-            console.print(f"  • [white]Persistent Execution Audit:[/white] [blue underline]{audit_log}[/blue underline] [dim](Full Forensic Log Trail)[/dim]")
+            console.print(f"  • [white]Forensic Markdown Audit:[/white] [blue underline]{audit_md}[/blue underline] [dim](Full Forensic Trail)[/dim]")
             
             # Attempt to auto-open Assets
             import webbrowser
             webbrowser.open(f"file://{Path(report_path).resolve()}")
-            webbrowser.open(f"file://{Path(audit_log).resolve()}")
+            webbrowser.open(f"file://{Path(audit_md).resolve()}")
             
         except Exception as e:
             logger.error(f"Failed to finalize reporting assets: {e}")
