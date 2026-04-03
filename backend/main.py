@@ -237,12 +237,13 @@ class HealthCheckRunner:
         table = Table(
             title="[bold italic white]Pre-Flight Health Checks[/bold italic white]", 
             border_style="cyan", 
-            box=box.SQUARE,
-            show_lines=True
+            box=box.HEAVY_EDGE,
+            show_lines=True,
+            width=100
         )
-        table.add_column("System Check", style="magenta", no_wrap=True)
-        table.add_column("Status", style="bold", justify="center")
-        table.add_column("Details", style="white", overflow="fold")
+        table.add_column("System Check", style="magenta", no_wrap=True, ratio=1)
+        table.add_column("Status", style="bold", justify="center", width=12)
+        table.add_column("Details", style="white", overflow="fold", ratio=2)
         
         for check in self.check_results:
             status_text = "[green]PASS[/green]" if check["passed"] else "[red]FAIL[/red]"
@@ -462,15 +463,16 @@ async def run_pipeline(args: argparse.Namespace, logger: logging.Logger) -> None
             table = Table(
                 title="[bold italic white]Cloudscape Scan Summary[/bold italic white]", 
                 border_style="cyan", 
-                box=box.SQUARE,
-                show_lines=True
+                box=box.HEAVY_EDGE,
+                show_lines=True,
+                width=120
             )
-            table.add_column("Tenant", style="magenta", no_wrap=True)
-            table.add_column("Status", style="bold", justify="center")
-            table.add_column("Duration (ms)", justify="right", style="green")
-            table.add_column("Nodes Discovered", justify="right", style="yellow")
-            table.add_column("CVSS Histogram", justify="center")
-            table.add_column("Errors", justify="right", style="red")
+            table.add_column("Tenant", style="magenta", no_wrap=True, ratio=1)
+            table.add_column("Status", style="bold", justify="center", width=15)
+            table.add_column("Duration (ms)", justify="right", style="green", width=15)
+            table.add_column("Nodes Discovered", justify="right", style="yellow", width=15)
+            table.add_column("CVSS Histogram", justify="center", ratio=2)
+            table.add_column("Errors", justify="right", style="red", width=10)
             
             top_threats = []
 
@@ -502,14 +504,15 @@ async def run_pipeline(args: argparse.Namespace, logger: logging.Logger) -> None
                 matrix = Table(
                     title="[bold italic white]Semantic Security Findings Matrix[/bold italic white]", 
                     border_style="red", 
-                    box=box.SQUARE,
-                    show_lines=True
+                    box=box.HEAVY_EDGE,
+                    show_lines=True,
+                    width=150
                 )
                 matrix.add_column("Resource ARN", style="cyan", overflow="fold", ratio=1)
-                matrix.add_column("Rule / CVE", style="magenta", justify="center")
-                matrix.add_column("Severity", style="bold red", justify="center")
+                matrix.add_column("Rule / CVE", style="magenta", justify="center", width=18)
+                matrix.add_column("Severity", style="bold red", justify="center", width=12)
                 matrix.add_column("Description", style="white", overflow="fold", ratio=2)
-                matrix.add_column("Blast Radius", style="bold yellow", justify="center")
+                matrix.add_column("Blast Radius", style="bold yellow", justify="center", width=12)
                 matrix.add_column("Remediation", style="green", overflow="fold", ratio=2)
                 
                 for t in top_threats: # pyre-ignore[6]
@@ -536,9 +539,9 @@ async def run_pipeline(args: argparse.Namespace, logger: logging.Logger) -> None
                         str(t.get("remediation") or "Investigate logic flows and implement secure boundaries.")
                     )
                 
-                console.print(f"\n[bold yellow]⚠ TERMINAL PAGER ACTIVE (Press 'Q' to exit, 'Space' to scroll forward)[/bold yellow]")
-                if platform.system() != 'Windows':
-                    console.print("[dim]Note: Support for 'B' to scroll up depends on your system's 'less' configuration.[/dim]")
+                console.print(f"\n[bold yellow]⚠ TERMINAL PAGER ACTIVE[/bold yellow]")
+                console.print("[white]Controls: [bold]Space[/bold] (Down), [bold]Q[/bold] (Quit)[/white]")
+                console.print("[dim]Note: Windows 'more' pager does not support 'B' (Scroll Up). Please use the HTML Report for full bidirectional review.[/dim]\n")
                 
                 with console.pager(styles=True):
                     console.print(matrix)
@@ -553,13 +556,14 @@ async def run_pipeline(args: argparse.Namespace, logger: logging.Logger) -> None
             profiling = Table(
                 title="[bold italic white]System Component Profiling[/bold italic white]", 
                 border_style="blue", 
-                box=box.SQUARE,
-                show_lines=True
+                box=box.HEAVY_EDGE,
+                show_lines=True,
+                width=100
             )
-            profiling.add_column("Component", style="cyan")
-            profiling.add_column("Stage ID", style="magenta")
-            profiling.add_column("Latency (ms)", justify="right", style="white")
-            profiling.add_column("Status", justify="center")
+            profiling.add_column("Component", style="cyan", ratio=1)
+            profiling.add_column("Stage ID", style="magenta", ratio=1)
+            profiling.add_column("Latency (ms)", justify="right", style="white", width=15)
+            profiling.add_column("Status", justify="center", width=12)
             
             for state in states: # pyre-ignore[16]
                 for stage_id, phase in state.phase_metrics.items(): # pyre-ignore[16]
@@ -590,6 +594,15 @@ async def run_pipeline(args: argparse.Namespace, logger: logging.Logger) -> None
         logger.critical(f"Fatal pipeline error: {e}")
         logger.debug(traceback.format_exc())
     finally:
+        # Final HTML Export - Guarantees full audit trail capture
+        try:
+            report_path = "reports/security_findings_LATEST.html"
+            # Force a wide layout for the HTML export to prevent wrapping in browser
+            console.save_html(report_path)
+            console.print(f"\n[bold green]➜ SUPREME DIAGNOSTIC REPORT EXPORTED:[/bold green] [white underline]{report_path}[/white underline]")
+        except Exception as e:
+            logger.error(f"Failed to export HTML report: {e}")
+            
         await orchestrator.shutdown()
         if 'api_server' in locals() and api_server:
             await api_server.stop()
