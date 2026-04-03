@@ -10,6 +10,9 @@ import traceback
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Union, Set
 from datetime import datetime, timezone
+import io
+from rich.console import Console # type: ignore
+from rich.logging import RichHandler # type: ignore
 
 from pydantic import ( # pyre-ignore[21]
     BaseModel, 
@@ -20,6 +23,12 @@ from pydantic import ( # pyre-ignore[21]
     model_validator,
     ConfigDict
 )
+
+__all__ = ["logger", "settings", "tenants", "log_console", "ConfigurationManager"]
+
+# Global Log Console for HTML Export (Buffered for bit-perfect forensic capture)
+log_buffer = io.StringIO()
+log_console = Console(record=True, width=150, file=log_buffer, force_terminal=True)
 
 # ==============================================================================
 # CLOUDSCAPE - CONFIGURATION MANAGER
@@ -534,12 +543,6 @@ class ConfigurationManager:
     Initializes logging, establishes absolute file paths, parses YAML state, 
     applies environment variable overrides, and holds the configuration in 
     a stable memory address for the lifespan of the application.
-    
-    CLOUDSCAPE 5.2 UPGRADES:
-    - Comprehensive environment variable override matrix
-    - Configuration hash fingerprinting for change detection
-    - Runtime introspection and diff capabilities
-    - Graceful degradation on missing config files
     """
     
     # Class-level initialization tracking to prevent double-init
@@ -552,39 +555,27 @@ class ConfigurationManager:
         self.config_dir = self.base_dir / "backend" / "config"
         self.registry_dir = self.base_dir / "backend" / "config"
         
-        # Early Logging Bootstrap (Dual-Track: Console + persistent Markdown Audit)
-        log_format = "%(asctime)s | %(levelname)-8s | %(name)-35s | %(message)s"
+        # Early Logging Bootstrap (Dual-Track: Console + Buffered HTML Audit)
+        log_format = "%(name)-35s | %(message)s"
         
-        # Unify reporting to the project root repository
-        report_dir = self.base_dir / "reports"
-        report_dir.mkdir(exist_ok=True)
-        audit_md = report_dir / "execution_audit.md"
-        
-        # Ensure the file starts with a clean Markdown header if being newly created or appended
-        with open(audit_md, 'a', encoding='utf-8') as f:
-            f.write(f"\n# CLOUDSCAPE EXECUTION AUDIT - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-            f.write("```text\n")
-
         # Explicitly configure the root logger handlers to prevent initialization bypass
         root_logger = logging.getLogger()
         root_logger.setLevel(logging.INFO)
         
-        # Clean existing handlers to avoid duplicates (using list() to prevent iterator modification issues)
+        # Clean existing handlers to avoid duplicates
         for handler in list(root_logger.handlers):
             root_logger.removeHandler(handler)
             
-        # Add Console Handler
-        console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setFormatter(logging.Formatter(log_format))
+        # Add Console Handler (Standard Output)
+        console_handler = RichHandler(show_time=True, show_path=False, markup=True)
         root_logger.addHandler(console_handler)
         
-        # Add Markdown File Handler (Forced Flush for Windows stability)
-        file_handler = logging.FileHandler(audit_md, mode='a', encoding='utf-8')
-        file_handler.setFormatter(logging.Formatter(log_format))
-        root_logger.addHandler(file_handler)
+        # Add HTML Buffer Handler (Captured for final export)
+        html_handler = RichHandler(console=log_console, show_time=True, show_path=False, markup=True)
+        root_logger.addHandler(html_handler)
         
         self.logger = logging.getLogger("CloudScape.Core.Config")
-        self.logger.info(f"Forensic Audit Matrix established at: {audit_md}")
+        self.logger.info("Integrated HTML Forensic Logging active.")
         
         # State Containers
         self.settings: Optional[Settings] = None

@@ -60,6 +60,16 @@ html_buffer = io.StringIO()
 html_console = Console(record=True, width=180, force_terminal=True, file=html_buffer)
 
 # ==============================================================================
+# PLATFORM CORE — SUPREME CONFIGURATION MATRIX
+# ==============================================================================
+try:
+    # Point-blank injection of the Enterprise Matrix
+    from core.config import settings, tenants, log_console, logger # type: ignore
+except ImportError:
+    # Pre-boot fallback for path-divergent environments
+    settings, tenants, log_console, logger = None, [], None, logging.getLogger("CloudScape.Fallback")
+
+# ==============================================================================
 # PLATFORM SAFETY — ENCODING LOCK
 # ==============================================================================
 # Applied as a function call, NOT at import time, to prevent side effects 
@@ -141,11 +151,9 @@ from utils.logger import configure_logging, get_logger  # type: ignore
 
 def initialize_logging(log_level: str = "INFO", log_to_file: bool = True) -> logging.Logger:
     """
-    Initializes the enterprise logging subsystem using the centralized utils.logger.
+    Returns the unified enterprise logger already configured in core.config.
     """
-    log_dir = str(PROJECT_ROOT / "forensics" / "logs") if log_to_file else None
-    configure_logging(level=log_level, log_dir=log_dir)
-    logger = get_logger("CloudScape.Main")
+    from core.config import logger # type: ignore
     return logger
 
 
@@ -407,7 +415,7 @@ Examples:
 
 async def run_pipeline(args: argparse.Namespace, logger: logging.Logger) -> None:
     """Executes the main pipeline based on parsed arguments."""
-    from core.config import config as cfg  # type: ignore
+    from core.config import config as cfg, settings, log_console  # type: ignore
     from core.orchestrator import CloudScapeOrchestrator  # type: ignore
     
     # Override mode if specified
@@ -598,26 +606,26 @@ async def run_pipeline(args: argparse.Namespace, logger: logging.Logger) -> None
         logger.critical(f"Fatal pipeline error: {e}")
         logger.debug(traceback.format_exc())
     finally:
-        # Final HTML & Markdown Export & Audit Notification
+        # Final HTML Asset Export & Automated Review
         try:
             report_path = "reports/security_findings_LATEST.html"
-            audit_md = "reports/execution_audit.md"
+            audit_html = "reports/execution_audit.html"
             
-            # Close the Markdown code block before finalizing the report
-            with open(audit_md, 'a', encoding='utf-8') as f:
-                f.write("```\n")
-            
-            # Save the off-screen high-fidelity buffer
+            # Save the off-screen high-fidelity diagnostic matrix
             html_console.save_html(report_path)
             
-            console.print(f"\n[bold green]➜ SUPREME DIAGNOSTIC ASSETS EXPORTED:[/bold green]")
-            console.print(f"  • [white]High-Fidelity HTML Report:[/white] [blue underline]file://{Path(report_path).resolve()}[/blue underline] [dim](Separate Window Analysis)[/dim]")
-            console.print(f"  • [white]Forensic Markdown Audit:[/white] [blue underline]{audit_md}[/blue underline] [dim](Full Forensic Trail)[/dim]")
+            # Save the buffered forensic audit trail
+            from core.config import log_console # type: ignore
+            log_console.save_html(audit_html)
             
-            # Attempt to auto-open Assets
+            console.print(f"\n[bold green]➜ SUPREME DIAGNOSTIC ASSETS EXPORTED:[/bold green]")
+            console.print(f"  • [white]High-Fidelity Risk Matrix:[/white] [blue underline]file://{Path(report_path).resolve()}[/blue underline] [dim](Separate Window Analysis)[/dim]")
+            console.print(f"  • [white]Forensic Execution Audit:[/white] [blue underline]file://{Path(audit_html).resolve()}[/blue underline] [dim](Full Forensic Trail)[/dim]")
+            
+            # Attempt to auto-open Assets in default browser
             import webbrowser
             webbrowser.open(f"file://{Path(report_path).resolve()}")
-            webbrowser.open(f"file://{Path(audit_md).resolve()}")
+            webbrowser.open(f"file://{Path(audit_html).resolve()}")
             
         except Exception as e:
             logger.error(f"Failed to finalize reporting assets: {e}")
@@ -658,9 +666,9 @@ def main() -> None:
     parser = build_argument_parser()
     args = parser.parse_args()
     
-    # PHASE 4: Logging Initialization
-    log_level = "DEBUG" if args.verbose else "INFO"
-    logger = initialize_logging(log_level=log_level)
+    # PHASE 4: Logging Initialization (Using Unified Core Logger)
+    from core.config import settings, logger # type: ignore
+    logger.info(f"Ignition sequence phase 1.2: Enterprise configuration hashed and loaded. Environment: {settings.execution_mode}")
     
     # Enable Verbose Tracing if requested
     if args.verbose_trace:
