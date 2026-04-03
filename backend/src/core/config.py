@@ -932,4 +932,8 @@ class ConfigurationManager:
 
 # Export the absolute singleton instance. 
 # This locks configuration into memory and prevents async drift.
+# [SUPREME CORE 5.2] Explicit symbol elevation for cross-module visibility.
 config = ConfigurationManager()
+settings = config.settings
+tenants = config.tenants
+logger = config.logger
