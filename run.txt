@@ -1,5 +1,5 @@
 ================================================================================
-          🌌 CLOUDSCAPE 15.0 - SUPREME EXECUTION & COMMAND REFERENCE
+          CLOUDSCAPE 15.0 - SUPREME EXECUTION & COMMAND REFERENCE
 ================================================================================
 Version  : 15.0.0 "Apex Sovereign"
 Author   : Cloudscape Intelligence Matrix
