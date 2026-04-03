@@ -552,12 +552,24 @@ class ConfigurationManager:
         self.config_dir = self.base_dir / "config"
         self.registry_dir = self.base_dir / "config"
         
-        # Early Logging Bootstrap (Before main.py fully takes over)
+        # Early Logging Bootstrap (Dual-Track: Console + persistent Audit Log)
+        log_format = "%(asctime)s | %(levelname)-8s | %(name)-35s | %(message)s"
+        
+        # Ensure reports directory exists for the audit log
+        report_dir = self.base_dir / "reports"
+        report_dir.mkdir(exist_ok=True)
+        audit_log = report_dir / "execution_audit.log"
+        
         logging.basicConfig(
             level=logging.INFO,
-            format="%(asctime)s | %(levelname)-8s | %(name)-35s | %(message)s"
+            format=log_format,
+            handlers=[
+                logging.StreamHandler(sys.stdout),
+                logging.FileHandler(audit_log, mode='a', encoding='utf-8')
+            ]
         )
         self.logger = logging.getLogger("CloudScape.Core.Config")
+        self.logger.info(f"Audit Log established at: {audit_log}")
         
         # State Containers
         self.settings: Optional[Settings] = None

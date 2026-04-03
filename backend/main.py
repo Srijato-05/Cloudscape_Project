@@ -52,8 +52,12 @@ from rich.traceback import install # type: ignore
 # Install Global Advanced Traceback Hooks
 install(show_locals=True, width=120, word_wrap=True)
 
+import io
 # Initialize Global Rich Console with Recording enabled
 console = Console(record=True)
+# Isolate the HTML construction to an off-screen buffer to avoid terminal bleed
+html_buffer = io.StringIO()
+html_console = Console(record=True, width=180, force_terminal=True, file=html_buffer)
 
 # ==============================================================================
 # PLATFORM SAFETY — ENCODING LOCK
@@ -498,20 +502,20 @@ async def run_pipeline(args: argparse.Namespace, logger: logging.Logger) -> None
             
             console.print()
             console.print(table)
+            html_console.print(table)
             console.print()
             
             if top_threats:
                 matrix = Table(
                     title="[bold italic white]Semantic Security Findings Matrix[/bold italic white]", 
                     border_style="red", 
-                    box=box.HEAVY_EDGE,
-                    show_lines=True,
-                    width=150
+                    box=box.SQUARE,
+                    show_lines=True
                 )
                 matrix.add_column("Resource ARN", style="cyan", overflow="fold", ratio=1)
                 matrix.add_column("Rule / CVE", style="magenta", justify="center", width=18)
                 matrix.add_column("Severity", style="bold red", justify="center", width=12)
-                matrix.add_column("Description", style="white", overflow="fold", ratio=2)
+                matrix.add_column("Description", style="black", overflow="fold", ratio=2)
                 matrix.add_column("Blast Radius", style="bold yellow", justify="center", width=12)
                 matrix.add_column("Remediation", style="green", overflow="fold", ratio=2)
                 
@@ -539,18 +543,15 @@ async def run_pipeline(args: argparse.Namespace, logger: logging.Logger) -> None
                         str(t.get("remediation") or "Investigate logic flows and implement secure boundaries.")
                     )
                 
-                console.print(f"\n[bold yellow]⚠ TERMINAL PAGER ACTIVE[/bold yellow]")
-                console.print("[white]Controls: [bold]Space[/bold] (Down), [bold]Q[/bold] (Quit)[/white]")
-                console.print("[dim]Note: Windows 'more' pager does not support 'B' (Scroll Up). Please use the HTML Report for full bidirectional review.[/dim]\n")
+                # Render to both consoles
+                html_console.print()
+                html_console.print(matrix)
+                html_console.print()
                 
-                with console.pager(styles=True):
-                    console.print(matrix)
-                
-                # HTML Export for "Separate Window" Analysis
-                report_path = "reports/security_findings_LATEST.html"
-                console.save_html(report_path)
-                console.print(f"\n[bold green]➜ HIGH-FIDELITY REPORT EXPORTED:[/bold green] [white underline]{report_path}[/white underline]")
-                console.print("[dim]Use the above HTML report for 'Separate Window' analysis of large datasets.[/dim]\n")
+                # Restore CLI visibility with dynamic terminal scaling
+                console.print(f"\n[bold yellow]⚠ {len(top_threats)} CRITICAL/HIGH VULNERABILITIES DETECTED[/bold yellow]")
+                console.print(matrix)
+                console.print("[dim]Note: If the terminal wraps, use the high-fidelity HTML report for best results.[/dim]\n")
                 
             # System Component Profiling (MICRO-CHRONOMETRY)
             profiling = Table(
@@ -577,7 +578,10 @@ async def run_pipeline(args: argparse.Namespace, logger: logging.Logger) -> None
             
             console.print()
             console.print(profiling)
-            console.print(f"\n[bold blue]CLOUDSCAPE V15.0 EXECUTED IN {sum(s.total_duration_ms for s in states):.2f}ms TOTAL[/bold blue]") # pyre-ignore[16]
+            html_console.print(profiling)
+            total_timing = f"\n[bold blue]CLOUDSCAPE V15.0 EXECUTED IN {sum(s.total_duration_ms for s in states):.2f}ms TOTAL[/bold blue]" # pyre-ignore[16]
+            console.print(total_timing)
+            html_console.print(total_timing)
             console.print()
             
         if args.api:
@@ -594,14 +598,24 @@ async def run_pipeline(args: argparse.Namespace, logger: logging.Logger) -> None
         logger.critical(f"Fatal pipeline error: {e}")
         logger.debug(traceback.format_exc())
     finally:
-        # Final HTML Export - Guarantees full audit trail capture
+        # Final HTML Export & Audit Notification
         try:
             report_path = "reports/security_findings_LATEST.html"
-            # Force a wide layout for the HTML export to prevent wrapping in browser
-            console.save_html(report_path)
-            console.print(f"\n[bold green]➜ SUPREME DIAGNOSTIC REPORT EXPORTED:[/bold green] [white underline]{report_path}[/white underline]")
+            audit_log = "reports/execution_audit.log"
+            
+            # Save the off-screen high-fidelity buffer
+            html_console.save_html(report_path)
+            
+            console.print(f"\n[bold green]➜ SUPREME DIAGNOSTIC ASSETS EXPORTED:[/bold green]")
+            console.print(f"  • [white]High-Fidelity HTML Report:[/white] [blue underline]file://{Path(report_path).resolve()}[/blue underline] [dim](Separate Window Analysis)[/dim]")
+            console.print(f"  • [white]Persistent Execution Audit:[/white] [blue underline]{audit_log}[/blue underline] [dim](Full Forensic Log Trail)[/dim]")
+            
+            # Attempt to auto-open HTML Report
+            import webbrowser
+            webbrowser.open(f"file://{Path(report_path).resolve()}")
+            
         except Exception as e:
-            logger.error(f"Failed to export HTML report: {e}")
+            logger.error(f"Failed to finalize reporting assets: {e}")
             
         await orchestrator.shutdown()
         if 'api_server' in locals() and api_server:
