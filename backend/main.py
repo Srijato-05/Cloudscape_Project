@@ -52,7 +52,8 @@ from rich.traceback import install # type: ignore
 # Install Global Advanced Traceback Hooks
 install(show_locals=True, width=120, word_wrap=True)
 
-console = Console()
+# Initialize Global Rich Console with Recording enabled
+console = Console(record=True)
 
 # ==============================================================================
 # PLATFORM SAFETY — ENCODING LOCK
@@ -114,13 +115,18 @@ REQUIRED_DIRECTORIES = [
 
 def bootstrap_directories() -> None:
     """Creates all required directories idempotently."""
+    # Phase 1: Core Repositories
     for directory in REQUIRED_DIRECTORIES:
         try:
             directory.mkdir(parents=True, exist_ok=True)
         except PermissionError:
-            print(f"[WARN] Permission denied creating: {directory}")
-        except Exception as e:
-            print(f"[WARN] Could not create {directory}: {e}")
+            print(f"[ERROR] Permission denied creating {directory}")
+            
+    # Phase 2: Knowledge & Reporting Repositories
+    report_dir = Path("reports")
+    report_dir.mkdir(exist_ok=True)
+    
+    (Path("data") / "vault").mkdir(parents=True, exist_ok=True)
 
 
 # ==============================================================================
@@ -228,10 +234,15 @@ class HealthCheckRunner:
         all_passed &= self._check_config_integrity()
         
         # Summary Table
-        table = Table(title="Pre-Flight Health Checks", border_style="cyan", box=box.MINIMAL)
+        table = Table(
+            title="[bold italic white]Pre-Flight Health Checks[/bold italic white]", 
+            border_style="cyan", 
+            box=box.SQUARE,
+            show_lines=True
+        )
         table.add_column("System Check", style="magenta", no_wrap=True)
-        table.add_column("Status", style="bold")
-        table.add_column("Details", style="dim")
+        table.add_column("Status", style="bold", justify="center")
+        table.add_column("Details", style="white", overflow="fold")
         
         for check in self.check_results:
             status_text = "[green]PASS[/green]" if check["passed"] else "[red]FAIL[/red]"
@@ -448,9 +459,14 @@ async def run_pipeline(args: argparse.Namespace, logger: logging.Logger) -> None
             states = await orchestrator.run_full_pipeline()
             
             # Print scan summary
-            table = Table(title="Scan Summary", border_style="cyan", box=box.MINIMAL)
+            table = Table(
+                title="[bold italic white]Cloudscape Scan Summary[/bold italic white]", 
+                border_style="cyan", 
+                box=box.SQUARE,
+                show_lines=True
+            )
             table.add_column("Tenant", style="magenta", no_wrap=True)
-            table.add_column("Status", style="bold")
+            table.add_column("Status", style="bold", justify="center")
             table.add_column("Duration (ms)", justify="right", style="green")
             table.add_column("Nodes Discovered", justify="right", style="yellow")
             table.add_column("CVSS Histogram", justify="center")
@@ -515,13 +531,25 @@ async def run_pipeline(args: argparse.Namespace, logger: logging.Logger) -> None
                         f"[bold yellow]{t.get('blast_radius', 3.3):.1f}[/bold yellow]",
                         str(t.get("remediation") or "Investigate logic flows and implement secure boundaries.")
                     )
-                console.print(matrix)
+                with console.pager(styles=True):
+                    console.print(matrix)
+                
+                # HTML Export for "Separate Window" Analysis
+                report_path = "reports/security_findings_LATEST.html"
+                console.save_html(report_path)
+                console.print(f"\n[bold green]➜ HIGH-FIDELITY REPORT EXPORTED:[/bold green] [white underline]{report_path}[/white underline]")
+                console.print("[dim]Use the above HTML report for 'Separate Window' analysis of large datasets.[/dim]\n")
                 
             # System Component Profiling (MICRO-CHRONOMETRY)
-            profiling = Table(title="System Component Profiling", border_style="blue", box=box.HORIZONTALS)
+            profiling = Table(
+                title="[bold italic white]System Component Profiling[/bold italic white]", 
+                border_style="blue", 
+                box=box.SQUARE,
+                show_lines=True
+            )
             profiling.add_column("Component", style="cyan")
             profiling.add_column("Stage ID", style="magenta")
-            profiling.add_column("Latency (ms)", justify="right")
+            profiling.add_column("Latency (ms)", justify="right", style="white")
             profiling.add_column("Status", justify="center")
             
             for state in states: # pyre-ignore[16]

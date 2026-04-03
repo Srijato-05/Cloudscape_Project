@@ -1069,9 +1069,12 @@ class CloudScapeOrchestrator:
             return {"error": f"Base scan {scan_id} not found in forensic ledger."}
             
         # 2. Mutate State
-        from simulation.simulation_studio import SimulationStudio
-        from simulation.mesh_seeder import EnterpriseGraphMeshSeeder
+        import importlib
+        sim_studio_mod = importlib.import_module("simulation.simulation_studio")
+        SimulationStudio = sim_studio_mod.SimulationStudio
         
+        mesh_seeder_mod = importlib.import_module("simulation.mesh_seeder")
+        EnterpriseGraphMeshSeeder = mesh_seeder_mod.EnterpriseGraphMeshSeeder
         studio = SimulationStudio()
         scenario = studio.run_scenario(base_nodes, mutation_type, target_arn)
         mutated_nodes = scenario["mutated_nodes"]
@@ -1088,7 +1091,9 @@ class CloudScapeOrchestrator:
         await self._run_vulnerability_intelligence(sim_state, mutated_nodes)
         
         # 4. Detailed Blast Analysis
-        from intelligence.blast_radius import blast_radius_engine
+        import importlib
+        blast_mod = importlib.import_module("intelligence.blast_radius")
+        blast_radius_engine = blast_mod.blast_radius_engine
         blast_detail = blast_radius_engine.analyze_impact(target_arn, mutated_nodes)
         
         # 5. Synthesize Final Report
