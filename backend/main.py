@@ -610,9 +610,10 @@ async def run_pipeline(args: argparse.Namespace, logger: logging.Logger) -> None
             console.print(f"  • [white]High-Fidelity HTML Report:[/white] [blue underline]file://{Path(report_path).resolve()}[/blue underline] [dim](Separate Window Analysis)[/dim]")
             console.print(f"  • [white]Persistent Execution Audit:[/white] [blue underline]{audit_log}[/blue underline] [dim](Full Forensic Log Trail)[/dim]")
             
-            # Attempt to auto-open HTML Report
+            # Attempt to auto-open Assets
             import webbrowser
             webbrowser.open(f"file://{Path(report_path).resolve()}")
+            webbrowser.open(f"file://{Path(audit_log).resolve()}")
             
         except Exception as e:
             logger.error(f"Failed to finalize reporting assets: {e}")

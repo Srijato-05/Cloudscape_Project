@@ -547,15 +547,15 @@ class ConfigurationManager:
     _config_hash: str = ""
     
     def __init__(self):
-        # Establish absolute paths dynamically regardless of where main.py is executed
-        self.base_dir = Path(__file__).resolve().parent.parent.parent
-        self.config_dir = self.base_dir / "config"
-        self.registry_dir = self.base_dir / "config"
+        # Establish absolute paths dynamically - Point to the Cloudscape root
+        self.base_dir = Path(__file__).resolve().parent.parent.parent.parent
+        self.config_dir = self.base_dir / "backend" / "config"
+        self.registry_dir = self.base_dir / "backend" / "config"
         
         # Early Logging Bootstrap (Dual-Track: Console + persistent Audit Log)
         log_format = "%(asctime)s | %(levelname)-8s | %(name)-35s | %(message)s"
         
-        # Ensure reports directory exists for the audit log
+        # Unify reporting to the project root repository
         report_dir = self.base_dir / "reports"
         report_dir.mkdir(exist_ok=True)
         audit_log = report_dir / "execution_audit.log"
