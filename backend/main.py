@@ -513,24 +513,33 @@ async def run_pipeline(args: argparse.Namespace, logger: logging.Logger) -> None
                 matrix.add_column("Remediation", style="green", overflow="fold", ratio=2)
                 
                 for t in top_threats: # pyre-ignore[6]
-                    cve_id = t.get("id") or t.get("cve_id") or "N/A"
+                    raw_id = t.get("id") or t.get("cve_id")
+                    cve_id = str(raw_id) if raw_id else "N/A"
+                    
                     desc = t.get("description") or t.get("title") or "No description provided."
                     
                     # Inject MITRE prefix if available
                     mitre = t.get("mitre") or {}
-                    tactic = mitre.get("tactic", "")
                     technique = mitre.get("technique", "").split(" (")[0]
                     if technique:
                         desc = f"[[bold blue]{technique}[/bold blue]] {desc}"
 
+                    severity = str(t.get('severity') or 'CRITICAL').upper()
+                    arn = str(t.get("resource_arn") or t.get("arn") or "arn:aws:unknown:resource")
+
                     matrix.add_row(
-                        str(t.get("resource_arn") or t.get("arn", "UNKNOWN")),
-                        str(cve_id),
-                        f"[bold red]{str(t.get('severity', 'CRITICAL'))}[/bold red]",
+                        arn,
+                        cve_id,
+                        f"[bold red]{severity}[/bold red]",
                         desc,
                         f"[bold yellow]{t.get('blast_radius', 3.3):.1f}[/bold yellow]",
                         str(t.get("remediation") or "Investigate logic flows and implement secure boundaries.")
                     )
+                
+                console.print(f"\n[bold yellow]⚠ TERMINAL PAGER ACTIVE (Press 'Q' to exit, 'Space' to scroll forward)[/bold yellow]")
+                if platform.system() != 'Windows':
+                    console.print("[dim]Note: Support for 'B' to scroll up depends on your system's 'less' configuration.[/dim]")
+                
                 with console.pager(styles=True):
                     console.print(matrix)
                 
