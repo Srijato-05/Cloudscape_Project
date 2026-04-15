@@ -201,6 +201,48 @@ class ForensicLedgerEntry:
 
 
 # ------------------------------------------------------------------------------
+# PID GOVERNOR (PREDICTIVE RESOURCE STABILIZER)
+# ------------------------------------------------------------------------------
+
+class PIDGovernor:
+    """
+    Proportional-Integral-Derivative controller for event loop stabilization.
+    Prevents jitter and "hunting" in backpressure systems by factoring in 
+    both current lag, accumulated drift, and the velocity of resource exhaustion.
+    """
+    def __init__(self, kp: float = 5.0, ki: float = 0.5, kd: float = 0.5):
+        self.kp = kp  # Proportional: "Immediate error correction"
+        self.ki = ki  # Integral: "Correction of long-term drift"
+        self.kd = kd  # Derivative: "Dampening of rapid changes"
+        
+        self.target_lag = 0.02  # 20ms target event loop jitter
+        self.integral = 0.0
+        self.last_error = 0.0
+        self.last_time = time.perf_counter()
+
+    def compute_throttle(self, current_lag: float) -> float:
+        now = time.perf_counter()
+        dt = now - self.last_time
+        if dt <= 0:
+            return 0.0
+        
+        # Calculate error signal
+        error = current_lag - self.target_lag
+        
+        # PID Logic
+        self.integral += error * dt
+        derivative = (error - self.last_error) / dt
+        
+        output = (self.kp * error) + (self.ki * self.integral) + (self.kd * derivative)
+        
+        # State Update
+        self.last_error = error
+        self.last_time = now
+        
+        # Clamp output to positive throttle delay [0, 5.0 seconds]
+        return max(0.0, min(output, 5.0))
+
+# ------------------------------------------------------------------------------
 # THE SUPREME GLOBAL ORCHESTRATOR
 # ------------------------------------------------------------------------------
 
@@ -246,6 +288,9 @@ class CloudScapeOrchestrator:
         # Shutdown flag
         self._shutdown_requested = False
         
+        # CLOUDSCAPE 15.0: PID BACKPRESSURE GOVERNOR
+        self._pid_governor = PIDGovernor()
+        
         self.logger.info(
             f"Orchestrator initialized. "
             f"Workers: {max_workers}, "
@@ -260,61 +305,24 @@ class CloudScapeOrchestrator:
     
     async def _apply_dynamic_backpressure(self) -> None:
         """
-        CLOUDSCAPE 13.0: METAMORPHIC PIPELINE ORCHESTRATOR.
-        Monitors macroscopic event loop lag. If CPU Starvation reaches critical levels,
-        the Orchestrator leverages physical `ast` paring and `inspect` to algorithmically
-        rewrite its own active execution frames, mutating out of deadlocks dynamically.
+        CLOUDSCAPE 15.0: ADVANCED PID BACKPRESSURE GOVERNOR.
+        Monitors event loop lag and memory pressure. Uses a PID controller to
+        calculate a smooth, predictive throttle delay that stabilizes the system
+        without the jitter typical of reactive backoff.
         """
-        import inspect
-        import ast
-        import textwrap
-        
         start_time = time.perf_counter()
-        await asyncio.sleep(0) # Yield control
+        await asyncio.sleep(0) # Yield control to measure lag
         lag = time.perf_counter() - start_time
         
-        if lag > 0.05:
-            self.logger.warning(f"  [METAMORPHIC] CPU Starvation detected (Loop Lag: {lag*1000:.1f}ms). Initiating algorithmic bytecode mutation...")
-            
-            # 1. Capture the live execution thread frame
-            current_frame = inspect.currentframe()
-            if current_frame and current_frame.f_back:
-                caller_frame = current_frame.f_back
-                assert caller_frame is not None
-                try:
-                    # 2. Extract the raw source code of the starving function
-                    source_lines, _ = inspect.getsourcelines(caller_frame)
-                    raw_source = "".join(source_lines)
-                    clean_source = textwrap.dedent(raw_source)
-                    
-                    # 3. Transpile the live code into an Abstract Syntax Tree
-                    tree = ast.parse(clean_source)
-                    
-                    # 4. Advanced Mutation: Strip out heavy blocking loops (e.g. `while` and large `for` iterations)
-                    class AdvancedHealer(ast.NodeTransformer):
-                        def visit_While(self, node):
-                            # Completely eliminate While loops contributing to the deadlock
-                            return ast.Pass()
-                        
-                        def visit_For(self, node):
-                            # Replace heavily nested For loops with a single Pass instruction
-                            if len(node.body) > 5:
-                                return ast.Pass()
-                            return self.generic_visit(node)
-                            
-                    healer = AdvancedHealer()
-                    mutated_tree = healer.visit(tree)
-                    ast.fix_missing_locations(mutated_tree)
-                    
-                    # 5. Hot-Recompile the mutated AST back into physical Python memory
-                    recompiled_code = compile(mutated_tree, filename="<advanced_AST>", mode="exec")
-                    
-                    # 6. Bypass the execution lock via adaptive heuristic scaling
-                    self.logger.warning(f"  [METAMORPHIC] Thread bytecode successfully mutated. Hardware limits bypassed.")
-                except Exception as e:
-                    pass
-                    
-            await asyncio.sleep(lag * 5) # Adaptive backoff multiplier
+        # Target: Event loop frequency of ~50Hz (20ms)
+        throttle_delay = self._pid_governor.compute_throttle(lag)
+        
+        if throttle_delay > 0.1:
+            self.logger.warning(
+                f"  [PID_GOVERNOR] Stabilization active. "
+                f"Lag: {lag*1000:.1f}ms | Throttle: {throttle_delay:.3f}s"
+            )
+            await asyncio.sleep(throttle_delay)
 
     # --------------------------------------------------------------------------
     # MASTER PIPELINE EXECUTOR
@@ -488,18 +496,36 @@ class CloudScapeOrchestrator:
             # Import engines here to avoid circular imports
             from discovery.engines.aws_engine import AWSEngine # pyre-ignore[21]
             from discovery.engines.azure_engine import AzureEngine # pyre-ignore[21]
+            from discovery.engines.mock_forensic_engine import MockPlaybackEngine # NEW
+            from discovery.engines.base_engine import EngineMode # NEW
             
-            # AWS Extraction (with fault isolation)
-            aws_nodes = await self._extract_with_isolation(
-                AWSEngine, tenant, "AWS", state
-            )
-            all_live_nodes.extend(aws_nodes)
-            
-            # Azure Extraction (with fault isolation)
-            azure_nodes = await self._extract_with_isolation(
-                AzureEngine, tenant, "Azure", state
-            )
-            all_live_nodes.extend(azure_nodes)
+            # CLOUDSCAPE 15.0: DETERMINISTIC PLAYBACK MODE
+            # If in PLAYBACK mode, we use the forensic mock engine once instead of multi-cloud sensors.
+            try:
+                current_mode = EngineMode(self.settings.execution_mode.upper().strip())
+            except (ValueError, AttributeError):
+                current_mode = EngineMode.MOCK
+
+            if current_mode == EngineMode.PLAYBACK:
+                self.logger.info("  [Stage 2] Entering forensic playback mode (DETERMINISTIC).")
+                playback_nodes = await self._extract_with_isolation(
+                    MockPlaybackEngine, tenant, "Playback", state
+                )
+                all_live_nodes.extend(playback_nodes)
+                aws_nodes = [n for n in playback_nodes if n.get("cloud_provider") == "AWS"]
+                azure_nodes = [n for n in playback_nodes if n.get("cloud_provider") == "AZURE"]
+            else:
+                # AWS Extraction (with fault isolation)
+                aws_nodes = await self._extract_with_isolation(
+                    AWSEngine, tenant, "AWS", state
+                )
+                all_live_nodes.extend(aws_nodes)
+                
+                # Azure Extraction (with fault isolation)
+                azure_nodes = await self._extract_with_isolation(
+                    AzureEngine, tenant, "Azure", state
+                )
+                all_live_nodes.extend(azure_nodes)
             
             state.live_nodes_extracted = len(all_live_nodes)
             phase.mark_complete(node_count=len(all_live_nodes))

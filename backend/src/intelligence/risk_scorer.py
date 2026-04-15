@@ -6,6 +6,7 @@ import time
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional, Tuple, Set, Union
 import traceback
+from utils.optional_deps import require_deps, get_dep # type: ignore
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -349,6 +350,7 @@ class IntelligenceAI_Predictor:
         self.logger = logging.getLogger("CloudScape.Logic.RiskScorer.Intelligence")
         self.prior_zero_day_prob = 0.005 # 0.5% base chance of unknown exploit
         
+    @require_deps(["numpy"], isolation=True)
     def calculate_bayesian_posterior(self, properties: Dict, cvss_score: float) -> float:
         """
         Executes a localized Markov-Chain Monte Carlo (MCMC) inference via a transition 
@@ -359,31 +361,35 @@ class IntelligenceAI_Predictor:
         # The base cvss score mutates the transition tensor dynamically.
         base_risk = min((cvss_score / 10.0), 0.95)
         
-        try:
-            import numpy as np  # type: ignore
-            # Construct a dynamic 5x5 transition stochastic matrix
-            transition_matrix = np.array([
-                [1 - (base_risk*0.1), (base_risk*0.1), 0, 0, 0],
-                [0.1, 0.5, 0.4 * base_risk, 0, 0],
-                [0, 0.2, 0.5, 0.3 * base_risk, 0],
-                [0, 0, 0.1, 0.6, 0.3],
-                [0, 0, 0, 0, 1.0] # Absorbing state
-            ])
-            
-            # Initial state vector: 100% chance starting at "Safe" (index 0)
-            state_vector = np.array([1.0, 0.0, 0.0, 0.0, 0.0])
-            
-            # Step through time (t=10 bounds)
-            for _ in range(10):
-                state_vector = np.dot(state_vector, transition_matrix)
+        np = get_dep("numpy")
+        if np:
+            try:
+                # Construct a dynamic 5x5 transition stochastic matrix
+                transition_matrix = np.array([
+                    [1 - (base_risk*0.1), (base_risk*0.1), 0, 0, 0],
+                    [0.1, 0.5, 0.4 * base_risk, 0, 0],
+                    [0, 0.2, 0.5, 0.3 * base_risk, 0],
+                    [0, 0, 0.1, 0.6, 0.3],
+                    [0, 0, 0, 0, 1.0] # Absorbing state
+                ])
                 
-            # The posterior probability of absolute compromise (State 4)
-            posterior_prob = float(state_vector[4])
-            return min(max(posterior_prob, self.prior_zero_day_prob), 1.0)
-            
-        except ImportError:
-            # Fallback if numpy is missing, emulate the dot-product scalar probability
-            return min((base_risk * 1.5) * 0.4, 1.0)
+                # Initial state vector: 100% chance starting at "Safe" (index 0)
+                state_vector = np.array([1.0, 0.0, 0.0, 0.0, 0.0])
+                
+                # Step through time (t=10 bounds)
+                for _ in range(10):
+                    state_vector = np.dot(state_vector, transition_matrix)
+                    
+                # The posterior probability of absolute compromise (State 4)
+                posterior_prob = float(state_vector[4])
+                return min(max(posterior_prob, self.prior_zero_day_prob), 1.0)
+                
+            except Exception as e:
+                self.logger.warning(f"MCMC Computation failed: {e}")
+                pass
+        
+        # Fallback if numpy is missing or failed, emulate the dot-product scalar probability
+        return min((base_risk * 1.5) * 0.4, 1.0)
         
     def generate_latent_gnn_anomaly(self, node_type: str, tags: Dict) -> float:
         """

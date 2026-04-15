@@ -500,7 +500,7 @@ class Settings(BaseModel):
     @classmethod
     def validate_execution_mode(cls, v: str) -> str:
         """Normalizes execution mode to uppercase."""
-        valid_modes = {"MOCK", "LIVE", "HYBRID", "DRY_RUN"}
+        valid_modes = {"MOCK", "LIVE", "HYBRID", "DRY_RUN", "PLAYBACK"}
         normalized = v.upper().strip()
         if normalized not in valid_modes:
             return "MOCK"

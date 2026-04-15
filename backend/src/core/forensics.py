@@ -103,13 +103,15 @@ class TimelineReconstructor:
             try:
                 with open(f, "r") as handle:
                     data = json.load(handle)
+                    state = data.get("state_snapshot", {})
                     timeline.append({
                         "timestamp": data["metadata"]["timestamp"],
                         "stage": data["metadata"]["stage"],
                         "node_count": data["metadata"]["node_count"],
-                        "risk_summary": data.get("state_snapshot", {}).get("risk_score", 0.0)
+                        "risk_summary": state.get("risk_score") or state.get("risk") or 0.0
                     })
-            except Exception:
+            except Exception as e:
+                self.ledger.logger.error(f"Error parsing forensic file {f}: {e}")
                 continue
                 
         return timeline

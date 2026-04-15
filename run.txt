@@ -35,13 +35,14 @@ A. WINDOWS POWERSHELL SETUP
    > Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
 
 B. VIRTUAL ENVIRONMENT ENTRANCE
-   The .venv contains the supreme-tier diagnostic and simulation libraries.
-   > .\.venv\Scripts\activate.ps1
+   The Poetry environment contains the supreme-tier diagnostic and simulation libraries.
+   > poetry shell
+   > poetry install  # To bootstrap new environments
 
 C. SYSTEM DEPENDENCY AUDIT
-   - Python 3.11.x (Optimized for AsyncIO and SMT solving)
+   - Python 3.12.x (Optimized for AsyncIO and SMT solving)
+   - Poetry 2.3.2+ (For deterministic orchestration)
    - Docker Desktop with WSL2 Backend (For infrastructure mesh)
-   - Node.js 20+ (For React HUD)
 
 D. CORE MESH PORTS Reference:
    - 7474 : Neo4j Browser (HTTP)
@@ -82,53 +83,40 @@ C. [DESTRUCT] HARD_RESET.PS1
    > .\scripts\hard_reset.ps1 -BypassConfirmation
 
 ================================================================================
-3. BACKEND ENGINE (The Python Orchestrator)
+3. BACKEND ENGINE (Poetry Orchestration)
 ================================================================================
-The entry point is `backend/main.py`. It coordinates all intelligence modules.
+The primary entry point is the `cloudscape` shim managed by Poetry.
 
 A. SUPREME DIAGNOSTICS & HEALTH (--health)
-   Executes a 15-point pre-flight validation on the mesh.
-   - Database reachability (Neo4j/Redis)
-   - Cloud API Latency (LocalStack/Azurite)
-   - Signature Integrity (YARA/Rego)
-   - Ledger Persistence (Forensic Index)
-   > python backend/main.py --health
+   > poetry run cloudscape --health
 
 B. PIPELINE EXECUTION MODES (--mode)
    - MOCK  : High-fidelity simulation using CloudMockSuite.
    - LIVE  : Real-world discovery on authenticated AWS/Azure endpoints.
-   - HYBRID: Blending live discovery with synthetic "What-if" mutations.
-   > python backend/main.py --mode MOCK
-   > python backend/main.py --mode LIVE
+   > poetry run cloudscape --mode MOCK
+   > poetry run cloudscape --mode LIVE
 
-C. BIT-LEVEL FORENSIC TRACING (--verbose-trace)
-   Enables a JSONL event stream of every API call, mutation result,
-   and graph transition. Essential for forensic audit.
-   > python backend/main.py --verbose-trace
+C. SUPREME HARDENING VERIFICATION
+   Validate all 6 advanced sub-systems (PID, Safety, Blast, Drift, etc.):
+   > poetry run verify
 
-D. TEMPORAL FORENSIC PLAYBACK (--timeline)
-   Reconstructs the virtual infrastructure state from the Forensic Ledger.
-   This allows for "Time-Travel" analysis of security drift.
-   > python backend/main.py --timeline
+D. BIT-LEVEL FORENSIC TRACING (--verbose-trace)
+   > poetry run cloudscape --verbose-trace
 
-E. HUD API SERVER (--api)
-   Starts the FastAPI rest server to bridge the backend to the React UI.
-   > python backend/main.py --mode MOCK --api
+E. TEMPORAL FORENSIC PLAYBACK (--timeline)
+   > poetry run cloudscape --timeline
 
-F. DAEMON MODE (--daemon)
-   Enters an infinite discovery loop. Ideal for continuous monitoring.
-   > python backend/main.py --daemon --interval 600
+F. HUD API SERVER (--api)
+   > poetry run cloudscape --mode MOCK --api
 
-G. GRAPH MAINTENANCE (--schema)
-   Applies Neo4j constraints, indexes, and GDS (Graph Data Science) parameters.
-   > python backend/main.py --schema
+G. DAEMON MODE (--daemon)
+   > poetry run cloudscape --daemon --interval 600
 
-H. REPORTING (--report)
-   Generates a structured forensic report containing:
-   - Asset Inventory Delta
-   - Blast Radius Quantities
-   - Attack Path Probabilities
-   > python backend/main.py --report
+H. GRAPH MAINTENANCE (--schema)
+   > poetry run cloudscape --schema
+
+I. REPORTING (--report)
+   > poetry run cloudscape --report
 
 ================================================================================
 4. CLOUDMOCKSUITE (The Forensic Simulation Layer)
@@ -233,15 +221,18 @@ D. AZURITE (Azure Simulator)
    - Purpose: Simulates Blob and Resource Management telemetry.
 
 ================================================================================
-9. SUPREME TESTING SUITE
+9. SUPREME TESTING SUITE (Poetry Verified)
 ================================================================================
-Validated through the High-Fidelity Mock Layer.
+Validated through the High-Fidelity Mock Layer using the Poetry environment.
 
 A. UNIT TESTS (Logic)
-   > pytest backend/tests/
+   > poetry run pytest backend/tests/
 
 B. END-TO-END (Simulation Flow)
-   > pytest backend/tests/e2e/test_orchestrator_e2e.py -s -v
+   > poetry run pytest backend/tests/e2e/test_orchestrator_e2e.py -s -v
+
+C. ADVANCED SYSTEM VERIFICATION
+   > poetry run verify
 
 C. PERFORMANCE BENCHMARKS (Scalability)
    Validated against 100k+ synthetic node topologies.

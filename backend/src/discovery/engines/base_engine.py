@@ -46,6 +46,7 @@ class EngineMode(Enum):
     LIVE = "LIVE"
     HYBRID = "HYBRID"
     DRY_RUN = "DRY_RUN"
+    PLAYBACK = "PLAYBACK"
 
 
 class RetryOutcome(Enum):

@@ -99,6 +99,51 @@ The primary interface for the Cloudscape ecosystem is a high-performance React a
 - **Forensic Timeline Scrubber**: Allows security researchers to move through the infrastructure history as if it were a video stream.
 - **Blast Radius Simulator**: Interactive "Point-and-Click" tool to evaluate lateral movement paths from a compromised node.
 
+
+---
+
+## 🚀 Deployment & Operation
+
+### 1. Prerequisites
+- **Python**: 3.11+ (Targeted for 3.12.x)
+- **Poetry**: 2.3.2+ (Recommended for deterministic orchestration)
+- **Docker**: For Neo4j/Redis stateful services
+
+### 2. Rapid Initialization
+Bootstrap the entire forensic enclave with a single command:
+```powershell
+# Install all 100+ secure dependencies & map the 'cloudscape' entry point
+poetry install
+```
+
+### 3. Running the Engine
+Execute the autonomous discovery pipeline in MOCK mode (100% safe):
+```powershell
+# Standard execution
+poetry run cloudscape --mode MOCK
+
+# High-fidelity debugging with verbose logging
+poetry run cloudscape --mode MOCK --log-level DEBUG
+```
+
+### 4. Supreme Hardening Verification
+Validate all 6 advanced sub-systems (PID Stability, Safety Kernel, Blast Radius, etc.):
+```powershell
+poetry run verify
+```
+
+---
+
+## 🏗️ Legacy & Fallback OPs
+For air-gapped or legacy environments where Poetry is unavailable, use the stabilized backup venv:
+```powershell
+# Activate legacy environment
+.\venv\Scripts\activate
+
+# Manual execution
+python backend/main.py --mode MOCK
+```
+
 ---
 
 ## 🛡️ The Sovereign Engineering Manifest
