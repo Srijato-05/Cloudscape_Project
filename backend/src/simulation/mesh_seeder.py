@@ -9,20 +9,19 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 from dataclasses import dataclass, field
 from collections import defaultdict
-import itertools
 
-from neo4j import GraphDatabase, Driver, exceptions as neo4j_exceptions  # type: ignore
+from neo4j import GraphDatabase, Driver, exceptions as neo4j_exceptions
 
-from core.config import config, TenantConfig  # type: ignore
+from core.config import config, TenantConfig
 
 # ==============================================================================
-# CLOUDSCAPE NEXUS 5.2 TITAN - ENTERPRISE NEO4J GRAPH MESH SEEDER
+# CLOUDSCAPE CORE 5.2 CLOUDSCAPE - ENTERPRISE NEO4J GRAPH MESH SEEDER
 # ==============================================================================
 # The Sovereign Graph Ingestion Kernel. Transforms URM-normalized resource nodes
 # into a fully connected Neo4j graph mesh with intelligent edge synthesis,
 # phantom node generation, and relationship weight computation.
 #
-# TITAN NEXUS 5.2 UPGRADES ACTIVE:
+# CLOUDSCAPE CORE 5.2 UPGRADES ACTIVE:
 # 1. BATCH MERGE: Uses UNWIND-based batch MERGE for O(1) per-node amortized cost.
 # 2. PHANTOM NODE SYNTHESIS: Generates referenced-but-unseen "shadow" nodes.
 # 3. INTELLIGENT EDGE FACTORY: Synthesizes edges from IAM policies, network 
@@ -69,8 +68,8 @@ class IngestionMetrics:
             },
             "performance": {
                 "batches": self.batch_count,
-                "ingestion_ms": float(f"{self.ingestion_time_ms:.2f}"),
-                "edge_synthesis_ms": float(f"{self.edge_synthesis_time_ms:.2f}"),
+                "ingestion_ms": round(self.ingestion_time_ms, 2), # type: ignore
+                "edge_synthesis_ms": round(self.edge_synthesis_time_ms, 2), # type: ignore
             },
             "graph_fingerprint": self.graph_fingerprint,
             "error_count": len(self.errors),
@@ -133,6 +132,9 @@ class EnterpriseGraphMeshSeeder:
             f"MeshSeeder initialized: uri={self.neo4j_uri}, "
             f"batch_size={self.batch_size}"
         )
+        
+        # In-memory node map for relation injection
+        self._node_lookup: Dict[str, Dict[str, Any]] = {}
 
     # --------------------------------------------------------------------------
     # CONNECTION MANAGEMENT
@@ -146,9 +148,7 @@ class EnterpriseGraphMeshSeeder:
                 auth=(self.neo4j_user, self.neo4j_password),
                 max_connection_pool_size=self.pool_size,
             )
-            driver = self.driver
-            assert driver is not None
-            driver.verify_connectivity()
+            self.driver.verify_connectivity()
             self.logger.info(f"Connected to Neo4j at {self.neo4j_uri}")
             return True
         except neo4j_exceptions.ServiceUnavailable:
@@ -164,9 +164,8 @@ class EnterpriseGraphMeshSeeder:
 
     def close(self) -> None:
         """Closes the Neo4j driver connection pool."""
-        driver = self.driver
-        if driver is not None:
-            driver.close()
+        if self.driver:
+            self.driver.close()
             self.logger.debug("Neo4j driver closed.")
 
     # --------------------------------------------------------------------------
@@ -185,6 +184,7 @@ class EnterpriseGraphMeshSeeder:
         self._known_arns.clear()
         self._phantom_refs.clear()
         self._edge_buffer.clear()
+        self._node_lookup = {n.get("arn", ""): n for n in nodes if n.get("arn")}
         
         start_time = time.perf_counter()
         
@@ -265,9 +265,8 @@ class EnterpriseGraphMeshSeeder:
             n._update_count = coalesce(n._update_count, 0) + 1
         """
         
-        nodes_seq = list(nodes)
-        for i in range(0, len(nodes_seq), self.batch_size):
-            batch = list(itertools.islice(nodes_seq, i, i + self.batch_size))
+        for i in range(0, len(nodes), self.batch_size):
+            batch = nodes[i:i + self.batch_size]  # type: ignore
             batch_data = []
             
             for node in batch:
@@ -291,10 +290,8 @@ class EnterpriseGraphMeshSeeder:
                 continue
             
             try:
-                driver = self.driver
-                assert driver is not None
-                with driver.session() as session:
-                    result = session.write_transaction(
+                with self.driver.session() as session:
+                    result = session.execute_write(
                         lambda tx: tx.run(merge_query, {"batch": batch_data}).consume()
                     )
                     counters = result.counters
@@ -332,9 +329,10 @@ class EnterpriseGraphMeshSeeder:
             if not arn:
                 continue
             
-            # IAM Trust Policy Analysis
+            # IAM Trust & Permissions Analysis
             if service == "iam" and resource_type in ("role", "user"):
                 self._analyze_iam_trust(arn, metadata, properties)
+                self._analyze_iam_permissions(arn, metadata, properties)
             
             # Network Topology (VPC/Subnet bindings)
             if metadata.get("VpcId"):
@@ -380,9 +378,6 @@ class EnterpriseGraphMeshSeeder:
         
         try:
             trust_doc = json.loads(trust_doc_str) if isinstance(trust_doc_str, str) else trust_doc_str
-            
-            if not isinstance(trust_doc, dict):
-                return
             
             for statement in trust_doc.get("Statement", []):
                 if statement.get("Effect") != "Allow":
@@ -430,6 +425,41 @@ class EnterpriseGraphMeshSeeder:
         except (json.JSONDecodeError, TypeError, KeyError) as e:
             self.logger.debug(f"  Trust policy parse error for {arn}: {e}")
 
+    def _analyze_iam_permissions(self, arn: str, metadata: Dict, properties: Dict) -> None:
+        """Analyzes Inline and Managed policies for outbound access edges."""
+        # Check Inline Policies (Cloudscape 5.2 URM structure)
+        sec_meta = metadata.get("_secondary_metadata", {})
+        inline_policies = sec_meta.get("InlinePolicies", [])
+        
+        for policy in inline_policies:
+            try:
+                doc = policy.get("PolicyDocument")
+                if isinstance(doc, str):
+                    doc = json.loads(doc)
+                
+                for statement in doc.get("Statement", []):
+                    if statement.get("Effect") != "Allow":
+                        continue
+                        
+                    resources = statement.get("Resource", [])
+                    if isinstance(resources, str):
+                        resources = [resources]
+                    
+                    for res in resources:
+                        if "*" in res:
+                            # In simulation, we can't always resolve '*' to a specific node
+                            # unless we check all nodes. For "Advanced" mode, we'll look for
+                            # hints in the killchain manifest or just skip for now.
+                            # But wait, we can just buffer an edge to everything if we wanted,
+                            # but that's too heavy.
+                            continue
+                        
+                        if res.startswith("arn:"):
+                            self._buffer_edge(arn, res, "HAS_PERMISSION", weight=1.5)
+                            self._register_phantom(res, arn, "HAS_PERMISSION", "IAM Policy Resource")
+            except Exception:
+                continue
+
     # --------------------------------------------------------------------------
     # EDGE BUFFER & FLUSH
     # --------------------------------------------------------------------------
@@ -450,6 +480,14 @@ class EnterpriseGraphMeshSeeder:
             "weight": weight,
             "extra": extra or {},
         })
+        
+        # CLOUDSCAPE ADVANCED: Inject back into the shared URM node object for in-memory analysis
+        if source_arn in self._node_lookup:
+            node = self._node_lookup[source_arn]
+            if "relationships" not in node:
+                node["relationships"] = []
+            if target_arn not in node["relationships"]:
+                node["relationships"].append(target_arn)
 
     def _flush_edge_buffer(self) -> None:
         """Writes all buffered edges to Neo4j in batches."""
@@ -476,9 +514,8 @@ class EnterpriseGraphMeshSeeder:
             if any(e.get("extra", {}).get("is_identity_bridge") for e in edges):
                 query += ", r.is_identity_bridge = edge.is_bridge, r.app_id = edge.app_id"
             
-            edges_seq = list(edges)
-            for i in range(0, len(edges_seq), self.batch_size):
-                batch = list(itertools.islice(edges_seq, i, i + self.batch_size))
+            for i in range(0, len(edges), self.batch_size):
+                batch = edges[i:i + self.batch_size]  # type: ignore
                 batch_data = [{
                     "source": e["source"],
                     "target": e["target"],
@@ -488,9 +525,7 @@ class EnterpriseGraphMeshSeeder:
                 } for e in batch]
                 
                 try:
-                    driver = self.driver
-                    assert driver is not None
-                    with driver.session() as session:
+                    with self.driver.session() as session:
                         result = session.execute_write(
                             lambda tx: tx.run(query, {"edges": batch_data}).consume()
                         )
@@ -553,9 +588,7 @@ class EnterpriseGraphMeshSeeder:
         } for ref in unique_phantoms.values()]
         
         try:
-            driver = self.driver
-            assert driver is not None
-            with driver.session() as session:
+            with self.driver.session() as session:
                 result = session.execute_write(
                     lambda tx: tx.run(phantom_query, {"phantoms": phantom_data}).consume()
                 )
@@ -578,9 +611,7 @@ class EnterpriseGraphMeshSeeder:
         Used to detect structural changes between ingestion cycles.
         """
         try:
-            driver = self.driver
-            assert driver is not None
-            with driver.session() as session:
+            with self.driver.session() as session:
                 result = session.run("""
                 MATCH (n)
                 WHERE n:CloudResource OR n:Resource
@@ -591,8 +622,7 @@ class EnterpriseGraphMeshSeeder:
                 
                 if record:
                     fingerprint_data = f"{record['nodes']}:{record['total_risk']}"
-                    digest = hashlib.sha256(fingerprint_data.encode()).hexdigest()
-                    return "".join(itertools.islice(digest, 16))
+                    return hashlib.sha256(fingerprint_data.encode()).hexdigest()[:16]
                     
         except Exception as e:
             self.logger.debug(f"  Fingerprint computation failed: {e}")
@@ -619,9 +649,9 @@ class EnterpriseGraphMeshSeeder:
         
         # Synthesize a best-guess ARN
         if cloud.upper() == "AWS":
-            return f"arn:aws:{service}:us-east-1:000000000000:{res_type}/{resource_id}"
+            return f"arn:aws:{service}:us-east-1:000000000000:{res_type}/{resource_id}"  # type: ignore
         elif cloud.upper() == "AZURE":
-            return f"/subscriptions/unknown/resourceGroups/unknown/providers/Microsoft.{service}/{res_type}/{resource_id}"
+            return f"/subscriptions/unknown/resourceGroups/unknown/providers/Microsoft.{service}/{res_type}/{resource_id}"  # type: ignore
         
         return resource_id
 

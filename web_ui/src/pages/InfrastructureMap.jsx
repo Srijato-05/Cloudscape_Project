@@ -49,7 +49,7 @@ function MapLegend({ nodeCount, edgeCount }) {
   return (
     <div style={legendStyle}>
       <div style={{ fontWeight: 'bold', fontSize: 14, marginBottom: 8, color: '#ffffff' }}>
-        📘 How to Read This Map
+        How to Read This Map
       </div>
 
       <div style={{ marginBottom: 10, color: '#8899aa' }}>
@@ -62,8 +62,8 @@ function MapLegend({ nodeCount, edgeCount }) {
       <div><span style={dotStyle('#fbbf24')}></span>AWS (Amazon) resource</div>
       <div><span style={dotStyle('#0ea5e9')}></span>Azure (Microsoft) resource</div>
       <div><span style={dotStyle('#3b82f6')}></span>Other cloud provider</div>
-      <div><span style={dotStyle('#f97316')}></span>⚠️ Medium risk (score 51–80)</div>
-      <div><span style={dotStyle('#ef4444')}></span>🚨 High risk (score 81–100)</div>
+      <div><span style={dotStyle('#f97316')}></span> Medium risk (score 51–80)</div>
+      <div><span style={dotStyle('#ef4444')}></span>High risk (score 81–100)</div>
 
       <div style={{ fontWeight: 'bold', marginTop: 10, marginBottom: 4, color: '#ffffff' }}>Connections</div>
       <div>
@@ -74,7 +74,7 @@ function MapLegend({ nodeCount, edgeCount }) {
       </div>
 
       <div style={{ marginTop: 10, color: '#667788', fontSize: 11 }}>
-        Showing {nodeCount.toLocaleString()} of 5,082+ resources · {edgeCount.toLocaleString()} connections
+        Showing {nodeCount.toLocaleString()} resources · {edgeCount.toLocaleString()} connections
       </div>
     </div>
   );
@@ -87,16 +87,22 @@ export default function InfrastructureMap() {
   const { nodes, edges, setGraph } = useStore();
 
   useEffect(() => {
-    getGraph().then(data => {
-      setGraph(data.nodes || [], data.edges || []);
-    }).catch(err => {
-      console.error('Failed to load graph, API is unavailable', err);
-    });
+    const fetchGraph = () => {
+      getGraph().then(data => {
+        setGraph(data.nodes || [], data.edges || []);
+      }).catch(err => {
+        console.error('Failed to load graph, API is unavailable', err);
+      });
+    };
+
+    fetchGraph(); // Initial fetch
+    const interval = setInterval(fetchGraph, 30000); // Poll every 30s
+    return () => clearInterval(interval);
   }, [setGraph]);
 
   return (
     <div style={{ padding: '0 20px 20px 20px', height: '100%', position: 'relative' }}>
-      <Header variant="h1" description="Live 3D topology map of 5,082+ merged nodes across 7 tenants · Hybrid Convergence Bridge · MOCK Mode">
+      <Header variant="h1" description={`Live 3D topology map of ${nodes.length} nodes · Hybrid Convergence Bridge`}>
         Multi-Cloud Infrastructure Topology
       </Header>
       

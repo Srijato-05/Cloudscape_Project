@@ -245,16 +245,33 @@ class CloudScapeOrchestrator:
     # MASTER PIPELINE EXECUTOR
     # --------------------------------------------------------------------------
     
-    async def run_full_pipeline(self) -> List[OrchestratorState]:
+    async def run_full_pipeline(
+        self, tenant_filter: Optional[str] = None
+    ) -> List[OrchestratorState]:
         """
-        Executes the full 5-stage pipeline for all configured tenants.
+        Executes the full 5-stage pipeline for configured tenants.
         
-        Returns a list of OrchestratorState objects, one per tenant, 
-        containing the complete audit trail of each scan cycle.
+        Args:
+            tenant_filter: If provided, only the tenant with this ID is processed.
+            
+        Returns a list of OrchestratorState objects, one per tenant.
         """
+        # Apply tenant filter
+        tenants = self.config_manager.tenants
+        if tenant_filter:
+            allowed_ids = [t.strip() for t in tenant_filter.split(",")]
+            tenants = [t for t in tenants if t.id in allowed_ids]
+            if not tenants:
+                self.logger.error(
+                    f"Tenant '{tenant_filter}' not found. "
+                    f"Available: {[t.id for t in self.config_manager.tenants]}"
+                )
+                return []
+            self.logger.info(f"Tenant filter active — processing only: {tenant_filter}")
+        
         self.logger.info("--- CLOUDSCAPE NEXUS 5.2 PIPELINE START ---")
         self.logger.info(f"Mode: {self.settings.execution_mode}")
-        self.logger.info(f"Tenants: {len(self.config_manager.tenants)}")
+        self.logger.info(f"Tenants: {len(tenants)}")
         self.logger.info(f"Sequential: {self.strict_sequential}")
         self.logger.info("-------------------------------------------")
         
@@ -262,7 +279,7 @@ class CloudScapeOrchestrator:
         
         if self.strict_sequential:
             # Serial processing — one tenant at a time (safest for LocalStack)
-            for tenant in self.config_manager.tenants:
+            for tenant in tenants:
                 if self._shutdown_requested:
                     self.logger.warning("Shutdown requested. Aborting remaining tenants.")
                     break
@@ -271,8 +288,8 @@ class CloudScapeOrchestrator:
         else:
             # Concurrent processing with semaphore-limited parallelism
             tasks = [
-                self._execute_tenant_pipeline(tenant) 
-                for tenant in self.config_manager.tenants
+                self._execute_tenant_pipeline(tenant)
+                for tenant in tenants
             ]
             all_states = list(await asyncio.gather(*tasks, return_exceptions=False))
         
@@ -281,6 +298,25 @@ class CloudScapeOrchestrator:
         total_paths = sum(s.intelligence_paths_discovered for s in all_states)
         total_errors = sum(len(s.errors) for s in all_states)
         
+        # Record GLOBAL SUMMARY for high-fidelity trends
+        if all_states:
+            from core.forensics import forensic_ledger
+            global_scan_id = f"GLOBAL_{int(time.time())}"
+            global_data = {
+                "metadata": {
+                    "scan_id": global_scan_id,
+                    "timestamp": datetime.now().isoformat(),
+                    "node_count": total_nodes,
+                    "tenant_count": len(all_states)
+                },
+                "state_snapshot": {
+                    "nodes": {"merged": total_nodes},
+                    "risk_score": sum(s.to_dict().get("risk_score", 0) for s in all_states) / len(all_states)
+                }
+            }
+            # Create a dedicated global directory
+            forensic_ledger.record_stage(global_scan_id, "GLOBAL_SUMMARY", global_data, nodes=None)
+
         self.logger.info("--- PIPELINE COMPLETE ---")
         self.logger.info(f"Tenants Processed: {len(all_states)}")
         self.logger.info(f"Total Merged Nodes: {total_nodes}")
@@ -306,20 +342,51 @@ class CloudScapeOrchestrator:
         
         async with self._tenant_semaphore:
             try:
+                from core.forensics import forensic_ledger
+                
                 # STAGE 1: READINESS
                 await self._stage_readiness(state, tenant)
+                forensic_ledger.record_stage(state.scan_id, PipelineStage.READINESS.value, state.to_dict(), nodes=None)
                 
                 # STAGE 2: EXTRACTION
                 live_nodes = await self._stage_extraction(state, tenant)
+                forensic_ledger.record_stage(state.scan_id, PipelineStage.EXTRACTION.value, state.to_dict(), nodes=live_nodes)
                 
                 # STAGE 3: FORGING (Synthetic APT)
                 synthetic_nodes = await self._stage_forging(state, tenant)
+                forensic_ledger.record_stage(state.scan_id, PipelineStage.FORGING.value, state.to_dict(), nodes=synthetic_nodes)
                 
                 # STAGE 4: CONVERGENCE
                 merged_nodes = await self._stage_convergence(state, live_nodes, synthetic_nodes)
                 
+                # --- ADVANCED DRIFT DETECTION ---
+                try:
+                    from core.forensics import StateComparator, event_registry
+                    scan_dirs = sorted([d for d in forensic_ledger.base_path.iterdir() if d.is_dir()], 
+                                      key=lambda x: x.stat().st_mtime, reverse=True)
+                    if len(scan_dirs) > 1:
+                        prev_scan_id = scan_dirs[1].name
+                        prev_state = forensic_ledger.load_latest_state(prev_scan_id)
+                        if prev_state:
+                            drift = StateComparator.compare(prev_state, merged_nodes)
+                            drift_summary = drift["summary"]
+                            if drift_summary["total_drift"] > 0:
+                                self.logger.warning(f"  [Drift] Captured {drift_summary['total_drift']} deep-property changes.")
+                                event_registry.record_event(
+                                    event_type="DRIFT",
+                                    severity="MEDIUM",
+                                    resource="Global Infrastructure",
+                                    message=f"Infrastructure Drift: {drift_summary['total_drift']} assets changed.",
+                                    metadata={"scan_id": state.scan_id, "prev_scan_id": prev_scan_id, "deltas": drift["deltas"]}
+                                )
+                except Exception as de:
+                    self.logger.debug(f"  [Drift] engine skipped: {de}")
+                
+                forensic_ledger.record_stage(state.scan_id, PipelineStage.CONVERGENCE.value, state.to_dict(), nodes=merged_nodes, full_persistence=True)
+                
                 # STAGE 5: INTELLIGENCE
                 await self._stage_intelligence(state, merged_nodes)
+                forensic_ledger.record_stage(state.scan_id, PipelineStage.INTELLIGENCE.value, state.to_dict(), nodes=merged_nodes)
                 
                 state.current_stage = PipelineStage.COMPLETE
                 
@@ -406,17 +473,34 @@ class CloudScapeOrchestrator:
             from discovery.engines.aws_engine import AWSEngine # pyre-ignore[21]
             from discovery.engines.azure_engine import AzureEngine # pyre-ignore[21]
             
+            # Determine which engines to run based on tenant provider
+            # This prevents spurious auth failures when running a provider-specific tenant
+            provider = getattr(tenant, 'provider', 'multi').lower()
+            run_aws = provider in ('aws', 'multi')
+            run_azure = provider in ('azure', 'multi')
+            
+            aws_nodes: List[Dict[str, Any]] = []
+            azure_nodes: List[Dict[str, Any]] = []
+            
             # AWS Extraction (with fault isolation)
-            aws_nodes = await self._extract_with_isolation(
-                AWSEngine, tenant, "AWS", state
-            )
-            all_live_nodes.extend(aws_nodes)
+            if run_aws:
+                aws_nodes = await self._extract_with_isolation(
+                    AWSEngine, tenant, "AWS", state
+                )
+                all_live_nodes.extend(aws_nodes)
+            else:
+                self.logger.debug(f"  [Stage 2] Skipping AWS engine for provider='{provider}' tenant {tenant.id}.")
+                state.aws_engine_status = ComponentStatus.SKIPPED
             
             # Azure Extraction (with fault isolation)
-            azure_nodes = await self._extract_with_isolation(
-                AzureEngine, tenant, "Azure", state
-            )
-            all_live_nodes.extend(azure_nodes)
+            if run_azure:
+                azure_nodes = await self._extract_with_isolation(
+                    AzureEngine, tenant, "Azure", state
+                )
+                all_live_nodes.extend(azure_nodes)
+            else:
+                self.logger.debug(f"  [Stage 2] Skipping Azure engine for provider='{provider}' tenant {tenant.id}.")
+                state.azure_engine_status = ComponentStatus.SKIPPED
             
             state.live_nodes_extracted = len(all_live_nodes)
             phase.mark_complete(node_count=len(all_live_nodes))
@@ -627,11 +711,46 @@ class CloudScapeOrchestrator:
             phase.mark_complete()
             state.phase_metrics[PipelineStage.INTELLIGENCE.value] = phase
             return
-        
         self.logger.debug(f"  [Stage 5] Ingesting {len(merged_nodes)} nodes with metadata into Neo4j...")
         
         try:
             state.intelligence_status = ComponentStatus.RUNNING
+            
+            from intelligence.unified_vuln_orchestrator import unified_orchestrator
+            
+            # MITRE ATT&CK Mapping Matrix
+            MITRE_MAP = {
+                "S3_PUBLIC": "TA0001 (Initial Access)",
+                "OPEN_SSH": "TA0001 (Initial Access)",
+                "IAM_FULL_ADMIN": "TA0004 (Privilege Escalation)",
+                "SCA_VULN": "TA0002 (Execution)",
+                "HARDCODED_SECRET": "TA0006 (Credential Access)"
+            }
+            
+            for node in merged_nodes:
+                try:
+                    vulns = unified_orchestrator.orchestrate_node_security(node)
+                    if vulns:
+                        node["vulnerabilities"] = vulns
+                        from core.forensics import event_registry
+                        for v in vulns:
+                            # Enrich with MITRE data
+                            rule = v.get("rule", "UNKNOWN")
+                            tactic = MITRE_MAP.get(rule, "TA0000 (Generic)")
+                            v["mitre_tactic"] = tactic
+                            
+                            event_registry.record_event(
+                                event_type="VULNERABILITY",
+                                severity=v.get("severity", "HIGH"),
+                                resource=node.get("name", "Unknown Resource"),
+                                message=f"[{tactic}] {v.get('description', 'Vulnerability detected')}",
+                                metadata={"node_id": node.get("id"), "rule": rule, "mitre": tactic}
+                            )
+                        
+                        base_risk = float(node.get("risk_score", 0.0) or 0.0)
+                        node["risk_score"] = min(10.0, base_risk + (len(vulns) * 1.5))
+                except Exception as vuln_err:
+                    self.logger.debug(f"    Vuln Orchestrator failed on node {node.get('name', 'unknown')}: {vuln_err}")
             
             # Sub-stage 5A: Neo4j Graph Ingestion
             await self._ingest_to_graph(merged_nodes)
@@ -649,7 +768,7 @@ class CloudScapeOrchestrator:
             state.identity_bridges_found = bridges_count
             
             state.intelligence_status = ComponentStatus.SUCCESS
-            phase.mark_complete(node_count=paths_count + bridges_count)
+            phase.mark_complete(node_count=len(merged_nodes))
             
             self.logger.info(
                 f"  [Stage 5] Intelligence complete. "
@@ -723,6 +842,7 @@ class CloudScapeOrchestrator:
                         # Convert dicts to JSON strings for Neo4j storage visibility
                         n['metadata_json'] = json.dumps(node.get('metadata', {}))
                         n['properties_json'] = json.dumps(node.get('properties', {}))
+                        n['vulnerabilities_json'] = json.dumps(node.get('vulnerabilities', []))
                         processed_batch.append(n)
 
                     # MERGE on the Resource label (which carries the UNIQUENESS
@@ -742,6 +862,7 @@ class CloudScapeOrchestrator:
                         n.risk_score = node.risk_score,
                         n.metadata_json = node.metadata_json,
                         n.properties_json = node.properties_json,
+                        n.vulnerabilities_json = node.vulnerabilities_json,
                         n._tenant_id = node.tenant_id,
                         n._resource_type = node.type,
                         n._baseline_risk_score = node.risk_score,
@@ -778,21 +899,28 @@ class CloudScapeOrchestrator:
             return 0
         
         try:
-            # Placeholder for HAPD engine integration
-            # In a full implementation, this would call the HAPD module
+            from intelligence.killchain_mapper import killchain_synthesizer
             self.logger.debug("    HAPD attack path discovery running...")
             
-            # Count high-risk nodes as potential path targets
-            high_risk_count = sum(
-                1 for n in nodes 
-                if isinstance(n.get("risk_score"), (int, float)) and n["risk_score"] >= 7.0
-            )
+            # Aggregate all vulnerabilities found by the Unified Orchestrator
+            all_vulns = []
+            for n in nodes:
+                if "vulnerabilities" in n:
+                    all_vulns.extend(n["vulnerabilities"])
             
-            self.logger.debug(f"    HAPD found {high_risk_count} high-risk nodes for path analysis.")
-            return high_risk_count
+            # Synthesize the killchain using GAN adversarial physics
+            killchain = killchain_synthesizer.synthesize_kill_chain(all_vulns)
+            
+            # Count the total number of tactics/paths synthesized
+            paths_count = sum(len(tactics) for tactics in killchain.get("tactics", {}).values())
+            
+            self.logger.debug(f"    HAPD synthesized {paths_count} adversarial attack vectors.")
+            return paths_count
             
         except Exception as e:
             self.logger.error(f"    HAPD engine error: {e}")
+            import traceback
+            self.logger.debug(traceback.format_exc())
             return 0
 
     async def _run_identity_fabric(self, nodes: List[Dict[str, Any]]) -> int:

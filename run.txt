@@ -1,5 +1,5 @@
 ================================================================================
-CLOUDSCAPE NEXUS 5.2 TITAN - COMMAND REFERENCE TERMINAL
+CLOUDSCAPE NEXUS 5.2 TITAN-COMMAND REFERENCE TERMINAL
 ================================================================================
 
 This document serves as the comprehensive execution manual for the
@@ -48,6 +48,7 @@ B. PIPELINE EXECUTION MODES
    > python backend/main.py --mode MOCK       # Override to MOCK mode
    > python backend/main.py --mode LIVE       # Override to LIVE mode
    > python backend/main.py --mode HYBRID     # Override to HYBRID mode
+   > python backend/main.py --mode LIVE --tenant "LIVE-AWS-01,LIVE-AZ-01" # Specific tenants
 
 C. REST API SERVER (serves React frontend)
    > python backend/main.py --mode MOCK --api     # Start API on port 4000
@@ -60,11 +61,12 @@ C. REST API SERVER (serves React frontend)
 D. DAEMON & CONTINUOUS SCANNING
    > python backend/main.py --daemon          # Infinite loop (default 300s)
    > python backend/main.py --daemon --interval 600
+   > python backend/main.py --mode LIVE --tenant "LIVE-AWS-01,LIVE-AZ-01" --api --daemon
 
 E. REPORTING & DEBUGGING
    > python backend/main.py --report          # Export forensic graph to JSON
    > python backend/main.py --verbose         # Enable DEBUG-level tracing
-   > python backend/main.py --no-simulation   # Disable APT synthetic injection
+   > python backend/main.py --no-simulation   # Disable synthetic node injection (crucial for clean LIVE extraction)
 
 ================================================================================
 3. REACT FRONTEND (Vite)
@@ -103,6 +105,7 @@ A. GRAPH MAINTENANCE (Neo4j)
    > python backend/src/utils/db_tools.py --stats    # Node/edge count metrics
    > python backend/src/utils/db_tools.py --gc       # Garbage collect
    > python backend/src/utils/db_tools.py --verify   # Audit graph integrity
+   > python backend/src/utils/db_tools.py --purge    # OOM-safe database wipe (removes all nodes)
    > python backend/src/utils/db_tools.py --full     # Run all maintenance
 
 B. MESH SEEDING (LocalStack Vulnerabilities)
@@ -117,9 +120,10 @@ C. VISIBILITY DEBUGGER
 ================================================================================
 Run both the backend API and React frontend together:
 
-   Terminal 1 (Backend):
+   Terminal 1 (Backend - Pure Live Extraction):
    > .\.venv\Scripts\activate.ps1
-   > python backend/main.py --mode MOCK --api
+   > pip install azure-identity azure-mgmt-compute azure-mgmt-network azure-mgmt-storage azure-mgmt-resource azure-mgmt-keyvault azure-mgmt-containerservice azure-mgmt-sql azure-mgmt-web # Required for Live Azure mode
+   > python backend/main.py --mode LIVE --tenant "LIVE-AWS-01,LIVE-AZ-01" --no-simulation --api --daemon
 
    Terminal 2 (Frontend):
    > cd web_ui

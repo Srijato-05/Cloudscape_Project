@@ -641,7 +641,9 @@ class ConfigurationManager:
             
         try:
             with open(tenant_path, 'r', encoding='utf-8') as file:
-                raw_tenants = yaml.safe_load(file) or {}
+                # Expand environment variables like ${AWS_ACCESS_KEY_ID} before parsing
+                raw_content = os.path.expandvars(file.read())
+                raw_tenants = yaml.safe_load(raw_content) or {}
                 
             # Store raw tenant data for introspection
             self._raw_tenants = raw_tenants.copy() if isinstance(raw_tenants, dict) else {"tenants": raw_tenants}

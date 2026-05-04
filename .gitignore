@@ -43,6 +43,11 @@ settings.json
 *.local.py
 secrets.yaml
 
+# Live credentials config - NEVER commit these with real values
+# Instead, use environment variables as templated in .env.example
+backend/config/tenants.yaml
+backend/config/settings.yaml
+
 # --- [4] IDE / EDITOR METADATA ---
 .vscode/
 .idea/

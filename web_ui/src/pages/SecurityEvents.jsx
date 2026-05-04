@@ -15,8 +15,8 @@ export default function SecurityEvents() {
   const items = securityEvents;
 
   const filteredItems = items.filter(item => 
-    item.resource.toLowerCase().includes(filteringText.toLowerCase()) ||
-    item.type.toLowerCase().includes(filteringText.toLowerCase())
+    (item.resource || '').toLowerCase().includes(filteringText.toLowerCase()) ||
+    (item.type || '').toLowerCase().includes(filteringText.toLowerCase())
   );
 
   return (

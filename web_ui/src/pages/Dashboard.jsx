@@ -12,17 +12,21 @@ import useStore from '../stores/useStore';
 import { getGraph } from '../services/api';
 
 export default function Dashboard() {
-  const { nodes, metrics, securityEvents, setGraph } = useStore();
+  const { nodes, edges, metrics, securityEvents, setGraph } = useStore();
   
   useEffect(() => {
-    if (nodes.length === 0) {
+    const fetchData = () => {
       getGraph().then(data => {
         setGraph(data.nodes || [], data.edges || []);
       }).catch(err => {
         console.error('API Error:', err);
       });
-    }
-  }, [nodes.length, setGraph]);
+    };
+
+    fetchData(); // Initial fetch
+    const interval = setInterval(fetchData, 30000); // Poll every 30s
+    return () => clearInterval(interval);
+  }, [setGraph]);
 
   const providerData = useMemo(() => {
     if (!nodes || nodes.length === 0) return [];
@@ -44,9 +48,19 @@ export default function Dashboard() {
     });
   }, [nodes]);
 
+  // Calculate dynamic metrics from live node state
+  const liveMetrics = useMemo(() => {
+    return {
+      totalAssets: nodes.length,
+      alertCount: nodes.filter(n => n.riskScore >= 70).length,
+      activeConnections: edges.length,
+      driftCount: 0 // Placeholder for future drift logic
+    };
+  }, [nodes, edges]);
+
   return (
     <ContentLayout
-      header={<Header variant="h1" description="Sovereign-Forensic Multi-Cloud Intelligence Mesh · Nexus 5.2 Titan · MOCK Mode">Mission Control Dashboard</Header>}
+      header={<Header variant="h1" description="Sovereign-Forensic Multi-Cloud Intelligence Mesh · Nexus 5.2 Titan · LIVE Mode">Mission Control Dashboard</Header>}
     >
       <SpaceBetween size="l">
         <Grid
@@ -54,19 +68,19 @@ export default function Dashboard() {
         >
           <Container fitHeight>
             <Box variant="h3">Total Cloud Assets</Box>
-            <Box variant="h1">{nodes.length > 0 ? nodes.length : (metrics.totalAssets || 435)}</Box>
+            <Box variant="h1">{liveMetrics.totalAssets}</Box>
           </Container>
           <Container fitHeight>
             <Box variant="h3">Drift Events (24h)</Box>
-            <Box variant="h1" color="text-status-warning">{metrics.driftCount || 0}</Box>
+            <Box variant="h1" color="text-status-warning">{liveMetrics.driftCount}</Box>
           </Container>
           <Container fitHeight>
             <Box variant="h3">Security Alerts</Box>
-            <Box variant="h1" color="text-status-error">{metrics.alertCount || 0}</Box>
+            <Box variant="h1" color="text-status-error">{liveMetrics.alertCount}</Box>
           </Container>
           <Container fitHeight>
             <Box variant="h3">Active Connections</Box>
-            <Box variant="h1" color="text-status-success">{metrics.activeConnections || 0}</Box>
+            <Box variant="h1" color="text-status-success">{liveMetrics.activeConnections}</Box>
           </Container>
         </Grid>
 

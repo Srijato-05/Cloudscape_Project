@@ -392,6 +392,15 @@ Examples:
         "--report", action="store_true",
         help="Generate forensic report from latest scan data"
     )
+    parser.add_argument(
+        "--test-connection", action="store_true", dest="test_connection",
+        help="Test cloud connectivity for the specified tenant and exit"
+    )
+    parser.add_argument(
+        "--timeline", action="store_true",
+        help="Reconstruct forensic timeline from ledger"
+    )
+
     
     return parser
 
@@ -437,7 +446,7 @@ async def run_pipeline(args: argparse.Namespace, logger: logging.Logger) -> None
                 cycle += 1
                 logger.info(f"--- DAEMON CYCLE {cycle} ---")
                 
-                states = await orchestrator.run_full_pipeline()
+                states = await orchestrator.run_full_pipeline(tenant_filter=getattr(args, 'tenant', None))
                 
                 # Log cycle summary
                 total_nodes = sum(s.merged_nodes_produced for s in states)
@@ -453,8 +462,9 @@ async def run_pipeline(args: argparse.Namespace, logger: logging.Logger) -> None
             while not orchestrator._shutdown_requested:
                 await asyncio.sleep(1)
         else:
-            # Single Scan Mode
-            states = await orchestrator.run_full_pipeline()
+            # Single Scan Mode — honour --tenant filter if provided
+            tenant_filter = getattr(args, 'tenant', None)
+            states = await orchestrator.run_full_pipeline(tenant_filter=tenant_filter)
             
             # Print scan summary
             table = Table(title="[bold cyan]Forensic Extraction Summary[/bold cyan]", border_style="cyan", box=box.MINIMAL)
@@ -510,6 +520,67 @@ async def run_schema_init(logger: logging.Logger) -> None:
         logger.error("db_tools module not available. Cannot initialize schema.")
     except Exception as e:
         logger.error(f"Schema initialization failed: {e}")
+        logger.debug(traceback.format_exc())
+
+
+async def run_connection_test(args: argparse.Namespace, logger: logging.Logger) -> None:
+    """
+    Tests cloud connectivity for the specified tenant without running extraction.
+    Calls STS GetCallerIdentity (AWS) or validates ClientSecretCredential (Azure).
+    """
+    from core.config import config as cfg  # type: ignore
+
+    # Override mode if specified
+    if args.mode:
+        cfg.settings.execution_mode = args.mode
+        logger.info(f"Execution mode overridden to: {args.mode}")
+
+    # Find the target tenant
+    target_tenant = None
+    if args.tenant:
+        for t in cfg.tenants:
+            if t.id == args.tenant:
+                target_tenant = t
+                break
+        if not target_tenant:
+            logger.error(f"Tenant '{args.tenant}' not found in tenants.yaml. Available: {[t.id for t in cfg.tenants]}")
+            return
+    else:
+        if cfg.tenants:
+            target_tenant = cfg.tenants[0]
+            logger.info(f"No --tenant specified. Using first tenant: {target_tenant.id}")
+        else:
+            logger.error("No tenants configured.")
+            return
+
+    provider = getattr(target_tenant, 'provider', 'aws')
+    logger.info(f"Testing connectivity for tenant '{target_tenant.id}' (provider: {provider})...")
+
+    try:
+        if provider == 'aws':
+            from discovery.engines.aws_engine import AWSEngine  # type: ignore
+            engine = AWSEngine(tenant=target_tenant)
+            success = await engine.test_connection()
+            if success:
+                console.print(f"\n[bold green]✅ SUCCESS[/bold green] — AWS connectivity verified for tenant [cyan]{target_tenant.id}[/cyan]")
+                console.print(f"   Account: [yellow]{target_tenant.credentials.aws_account_id}[/yellow]")
+                console.print(f"   Region:  [yellow]{target_tenant.credentials.aws_region}[/yellow]\n")
+            else:
+                console.print(f"\n[bold red]❌ FAILED[/bold red] — AWS connectivity failed for tenant [cyan]{target_tenant.id}[/cyan]\n")
+
+        elif provider == 'azure':
+            from discovery.engines.azure_engine import AzureEngine  # type: ignore
+            engine = AzureEngine(tenant=target_tenant)
+            success = await engine.test_connection()
+            if success:
+                console.print(f"\n[bold green]✅ SUCCESS[/bold green] — Azure connectivity verified for tenant [cyan]{target_tenant.id}[/cyan]\n")
+            else:
+                console.print(f"\n[bold red]❌ FAILED[/bold red] — Azure connectivity failed for tenant [cyan]{target_tenant.id}[/cyan]\n")
+        else:
+            logger.error(f"Unknown provider: {provider}")
+
+    except Exception as e:
+        console.print(f"\n[bold red]❌ CONNECTION ERROR[/bold red] — {e}\n")
         logger.debug(traceback.format_exc())
 
 
@@ -576,8 +647,19 @@ def main() -> None:
     
     # PHASE 7: Dispatch
     try:
+        if args.timeline:
+            from core import forensics as forensics_mod
+            from core.forensics import forensic_ledger
+            import json
+            TimelineReconstructor = forensics_mod.TimelineReconstructor
+            reconstructor = TimelineReconstructor(forensic_ledger)
+            timeline = reconstructor.playback_scan("SIM-MOCK-SCAN")
+            console.print(Panel(json.dumps(timeline, indent=2), title="[bold yellow]Forensic Timeline Playback[/bold yellow]"))
+            return
         if args.schema:
             asyncio.run(run_schema_init(logger))
+        elif args.test_connection:
+            asyncio.run(run_connection_test(args, logger))
         else:
             asyncio.run(run_pipeline(args, logger))
     except KeyboardInterrupt:

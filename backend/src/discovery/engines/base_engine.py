@@ -185,6 +185,35 @@ class CircuitBreaker:
         self.consecutive_successes = 0
 
 
+class AsyncTokenBucket:
+    """
+    Token bucket algorithm for strict per-second API rate limiting.
+    """
+    def __init__(self, rate: float, capacity: float):
+        self.rate = rate
+        self.capacity = capacity
+        self.tokens = capacity
+        self.last_update = time.monotonic()
+        self._lock = asyncio.Lock()
+
+    async def consume(self, tokens: float = 1.0) -> None:
+        async with self._lock:
+            now = time.monotonic()
+            elapsed = now - self.last_update
+            self.tokens = min(self.capacity, self.tokens + elapsed * self.rate)
+            self.last_update = now
+            
+            wait_time = 0.0
+            if self.tokens < tokens:
+                wait_time = (tokens - self.tokens) / self.rate
+                self.tokens = 0.0
+            else:
+                self.tokens -= tokens
+                
+        if wait_time > 0:
+            await asyncio.sleep(wait_time)
+
+
 # ------------------------------------------------------------------------------
 # FAST-FAIL ERROR CLASSIFICATION
 # ------------------------------------------------------------------------------
@@ -283,11 +312,12 @@ class BaseDiscoveryEngine(ABC):
             thread_name_prefix=f"engine-{tenant.id[:8]}"
         )
         
-        # Circuit Breaker
-        self._circuit_breaker = CircuitBreaker(
-            failure_threshold=max(3, self.max_retries),
-            recovery_timeout_sec=60.0
-        )
+        # Circuit Breakers (Scoped per-service)
+        self._circuit_breakers: Dict[str, CircuitBreaker] = {}
+        
+        # Token Bucket
+        rate_limit = getattr(config.settings.crawling, 'rate_limit_calls_per_sec', 10.0)
+        self._token_bucket = AsyncTokenBucket(rate_limit, rate_limit)
         
         # Telemetry
         self.metrics = EngineMetrics()
@@ -370,6 +400,15 @@ class BaseDiscoveryEngine(ABC):
     # ADAPTIVE EXPONENTIAL BACKOFF WITH CIRCUIT BREAKER
     # --------------------------------------------------------------------------
     
+    def _get_circuit_breaker(self, service_key: str) -> CircuitBreaker:
+        """Retrieves or creates a circuit breaker for a specific service."""
+        if service_key not in self._circuit_breakers:
+            self._circuit_breakers[service_key] = CircuitBreaker(
+                failure_threshold=max(3, self.max_retries),
+                recovery_timeout_sec=60.0
+            )
+        return self._circuit_breakers[service_key]
+
     async def execute_with_backoff(
         self, 
         func: Callable, 
@@ -400,18 +439,21 @@ class BaseDiscoveryEngine(ABC):
             Exception: The original exception after all retries are exhausted
         """
         op_name = operation_name or getattr(func, '__name__', 'unknown_operation')
+        service_key = op_name.split('.')[0] if '.' in op_name else op_name
         combined_fast_fail = FAST_FAIL_ERRORS | (fast_fail_on or set())
         
+        cb = self._get_circuit_breaker(service_key)
+        
         # Circuit Breaker Gate
-        if not self._circuit_breaker.can_execute():
+        if not cb.can_execute():
             self.metrics.api_calls_fast_failed += 1
             self.logger.warning(
                 f"[CIRCUIT OPEN] Rejecting call to '{op_name}'. "
-                f"Will recover in {self._circuit_breaker.recovery_timeout_sec}s."
+                f"Will recover in {cb.recovery_timeout_sec}s."
             )
             raise RuntimeError(
-                f"Circuit breaker OPEN for engine {self.engine_id}. "
-                f"Too many consecutive failures ({self._circuit_breaker.failure_count})."
+                f"Circuit breaker OPEN for service '{service_key}' in engine {self.engine_id}. "
+                f"Too many consecutive failures ({cb.failure_count})."
             )
         
         last_exception: Optional[Exception] = None
@@ -420,16 +462,20 @@ class BaseDiscoveryEngine(ABC):
             self.metrics.api_calls_total += 1
             
             try:
+                # Rate Limiter
+                await self._token_bucket.consume(1.0)
+                
                 # Acquire the concurrency semaphore
                 async with self._semaphore:
                     # Offload blocking function to thread pool
-                    result = await asyncio.get_event_loop().run_in_executor(
+                    loop = asyncio.get_running_loop()
+                    result = await loop.run_in_executor(
                         self._executor, functools.partial(func, *args, **kwargs)
                     )
                 
                 # Success path
                 self.metrics.api_calls_succeeded += 1
-                self._circuit_breaker.record_success()
+                cb.record_success()
                 return result
                 
             except Exception as e:
@@ -456,7 +502,7 @@ class BaseDiscoveryEngine(ABC):
                 if error_code in combined_fast_fail or is_message_fast_fail:
                     self.metrics.api_calls_failed += 1
                     self.metrics.api_calls_fast_failed += 1
-                    self._circuit_breaker.record_failure()
+                    cb.record_failure()
                     self.logger.warning(
                         f"[FAST-FAIL] '{op_name}' rejected with non-retryable error: "
                         f"{error_code} — {error_message[:150]}"
@@ -489,14 +535,14 @@ class BaseDiscoveryEngine(ABC):
                 else:
                     # All retries exhausted
                     self.metrics.api_calls_failed += 1
-                    self._circuit_breaker.record_failure()
+                    cb.record_failure()
                     
-                    if self._circuit_breaker.state == CircuitState.OPEN:
+                    if cb.state == CircuitState.OPEN:
                         self.metrics.circuit_breaker_trips += 1
                         self.logger.critical(
                             f"[CIRCUIT BREAKER TRIPPED] Engine {self.engine_id}: "
-                            f"'{op_name}' failed {self._circuit_breaker.failure_count} times. "
-                            f"Circuit OPEN for {self._circuit_breaker.recovery_timeout_sec}s."
+                            f"'{op_name}' failed {cb.failure_count} times. "
+                            f"Circuit OPEN for {cb.recovery_timeout_sec}s."
                         )
                     
                     self.logger.error(
@@ -595,8 +641,8 @@ class BaseDiscoveryEngine(ABC):
         # Sanitize the raw data — remove None values and circular references
         sanitized_data = self._deep_sanitize(raw_data)
         
-        # Calculate deterministic state hash for this resource
-        state_hash = self._compute_state_hash(arn, sanitized_data)
+        # Calculate deterministic state hash for this resource using RAW data to prevent None -> "" collapse
+        state_hash = self._compute_state_hash(arn, raw_data)
         
         # Extract human-readable name
         name = self._extract_resource_name(sanitized_data, resource_type, arn)
@@ -625,7 +671,7 @@ class BaseDiscoveryEngine(ABC):
         # Build the URM node
         urm_node = {
             "tenant_id": self.tenant.id,
-            "cloud_provider": service.upper() if service.upper() in ("AWS", "AZURE", "GCP") else "AWS",
+            "cloud_provider": getattr(self.tenant, 'provider', 'aws').upper(),
             "service": service.lower(),
             "type": resource_type.lower(),
             "arn": arn,
@@ -690,7 +736,19 @@ class BaseDiscoveryEngine(ABC):
         """
         try:
             # Create a canonical JSON representation (sorted keys, no whitespace)
-            canonical = json.dumps(data, sort_keys=True, default=str, separators=(',', ':'))
+            def json_default(obj):
+                if isinstance(obj, datetime):
+                    return obj.isoformat()
+                if isinstance(obj, bytes):
+                    try:
+                        return obj.decode('utf-8', errors='replace')
+                    except Exception:
+                        return obj.hex()
+                if hasattr(obj, '__dict__'):
+                    return str(obj)
+                return str(obj)
+                
+            canonical = json.dumps(data, sort_keys=True, default=json_default, separators=(',', ':'))
             hash_input = f"{arn}:{canonical}"
             return hashlib.sha256(hash_input.encode('utf-8')).hexdigest()
         except (TypeError, ValueError) as e:
@@ -819,7 +877,7 @@ class BaseDiscoveryEngine(ABC):
         Convenience wrapper: runs a blocking function in the thread pool.
         Simpler than execute_with_backoff for non-retryable operations.
         """
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             self._executor, functools.partial(func, *args, **kwargs)
         )
@@ -835,7 +893,7 @@ class BaseDiscoveryEngine(ABC):
             "engine_type": self.__class__.__name__,
             "tenant_id": self.tenant.id,
             "mode": self.mode.value,
-            "circuit_state": self._circuit_breaker.state.value,
+            "circuit_state": self.get_circuit_state(),
             **self.metrics.to_dict()
         }
 
@@ -846,12 +904,17 @@ class BaseDiscoveryEngine(ABC):
 
     def get_circuit_state(self) -> str:
         """Returns the current circuit breaker state as a string."""
-        return self._circuit_breaker.state.value
+        if any(cb.state == CircuitState.OPEN for cb in self._circuit_breakers.values()):
+            return CircuitState.OPEN.value
+        if any(cb.state == CircuitState.HALF_OPEN for cb in self._circuit_breakers.values()):
+            return CircuitState.HALF_OPEN.value
+        return CircuitState.CLOSED.value
 
     def reset_circuit_breaker(self) -> None:
-        """Manually resets the circuit breaker to CLOSED state."""
-        self._circuit_breaker.reset()
-        self.logger.info(f"Circuit breaker manually reset for engine {self.engine_id}.")
+        """Manually resets all circuit breakers to CLOSED state."""
+        for cb in self._circuit_breakers.values():
+            cb.reset()
+        self.logger.info(f"All circuit breakers manually reset for engine {self.engine_id}.")
 
     # --------------------------------------------------------------------------
     # ABSTRACT INTERFACE — CHILD ENGINES MUST IMPLEMENT

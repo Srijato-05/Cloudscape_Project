@@ -137,7 +137,7 @@ class AWSEngine(BaseDiscoveryEngine):
     async def test_connection(self) -> bool:
         """Validates connectivity by calling STS GetCallerIdentity."""
         try:
-            sts_client = self._create_boto_client("sts", "us-east-1")
+            sts_client = await self._create_boto_client("sts", "us-east-1")
             
             identity = await self.execute_with_backoff(
                 sts_client.get_caller_identity,
@@ -317,11 +317,11 @@ class AWSEngine(BaseDiscoveryEngine):
         service_name: str, 
         methods: Any
     ) -> List[Dict[str, Any]]:
-        """Extracts resources for a single service."""
+        """Extracts resources for a single service with lazy pagination and fault isolation."""
         nodes: List[Dict[str, Any]] = []
         
         try:
-            client = self._create_boto_client(service_name, region)
+            client = await self._create_boto_client(service_name, region)
         except Exception as e:
             self.logger.debug(f"    Could not create client for {service_name}: {e}")
             return nodes
@@ -337,81 +337,70 @@ class AWSEngine(BaseDiscoveryEngine):
                 continue
             
             try:
-                # Execute the API call with backoff and circuit breaker
-                raw_response = await self.execute_with_backoff(
-                    self._call_service_method,
-                    client, method_name,
-                    operation_name=f"{service_name}.{method_name}"
-                )
-                
-                if not raw_response:
+                method = getattr(client, method_name, None)
+                if not method:
                     continue
+                    
+                is_paginated = hasattr(client, 'can_paginate') and client.can_paginate(method_name)
                 
-                # Extract the resource list from the response
-                resources = self._extract_resource_list(raw_response, response_key, service_name)
-                
-                # Normalize each resource into a URM node
-                for resource in resources:
-                    try:
-                        urm_node = self._normalize_aws_resource(
-                            service_name, method_name, resource, region
+                if is_paginated:
+                    paginator = client.get_paginator(method_name)
+                    page_iterator = iter(paginator.paginate(PaginationConfig={'PageSize': self.pagination_page_size}))
+                    _DONE = object()  # Sentinel — avoids StopIteration escaping into asyncio
+                    
+                    while True:
+                        # next() with sentinel never raises StopIteration
+                        page = await self.execute_with_backoff(
+                            lambda: next(page_iterator, _DONE),
+                            operation_name=f"{service_name}.{method_name}"
                         )
-                        if urm_node:
-                            nodes.append(urm_node)
-                    except Exception as norm_error:
-                        self.logger.debug(f"    Normalization error: {norm_error}")
-                
+                        
+                        if page is _DONE:
+                            break  # End of pagination
+                        
+                        resources = self._extract_resource_list(page, response_key, service_name)
+                        for resource in resources:
+                            try:
+                                urm_node = self._normalize_aws_resource(service_name, method_name, resource, region)
+                                if urm_node: nodes.append(urm_node)
+                            except Exception as norm_error:
+                                self.logger.debug(f"    Normalization error: {norm_error}")
+                        
+                else:
+                    # Non-paginated call
+                    raw_response = await self.execute_with_backoff(
+                        method,
+                        operation_name=f"{service_name}.{method_name}"
+                    )
+                    
+                    if raw_response:
+                        resources = self._extract_resource_list(raw_response, response_key, service_name)
+                        for resource in resources:
+                            try:
+                                urm_node = self._normalize_aws_resource(service_name, method_name, resource, region)
+                                if urm_node: nodes.append(urm_node)
+                            except Exception as norm_error:
+                                self.logger.debug(f"    Normalization error: {norm_error}")
+
                 # LocalStack micro-cooling
                 if self.mode == EngineMode.MOCK:
                     await asyncio.sleep(0.2)
                     
             except RuntimeError as re:
                 if "Circuit breaker" in str(re):
-                    self.logger.warning(f"    Circuit breaker open for {service_name}")
+                    self.logger.warning(f"    Circuit breaker open for {service_name}. Stopping service extraction.")
                     break  # Stop calling this service entirely
-                raise
+                self.logger.debug(f"    {service_name}.{method_name} error: {re}")
             except Exception as e:
-                self.logger.debug(f"    {service_name}.{method_name} error: {e}")
+                # FAST-FAIL barrier (AccessDenied will be caught here instead of killing the whole service)
+                error_code = self._extract_error_code(e)
+                from discovery.engines.base_engine import FAST_FAIL_ERRORS
+                if error_code in FAST_FAIL_ERRORS or "AccessDenied" in str(e):
+                    self.logger.warning(f"  [ISOLATED] {service_name}.{method_name} permission denied in {region}: {e}")
+                else:
+                    self.logger.debug(f"    {service_name}.{method_name} error: {e}")
         
         return nodes
-
-    def _call_service_method(self, client, method_name: str) -> Optional[Dict]:
-        """
-        Calls a Boto3 service method with automatic pagination support.
-        This runs in a thread pool (blocking).
-        """
-        method = getattr(client, method_name, None)
-        if not method:
-            return None
-        
-        try:
-            # Check if the method supports pagination
-            if hasattr(client, 'get_paginator'):
-                try:
-                    paginator = client.get_paginator(method_name)
-                    pages = paginator.paginate(PaginationConfig={'PageSize': self.pagination_page_size})
-                    
-                    # Merge all pages into a single response
-                    merged = {}
-                    for page in pages:
-                        for key, value in page.items():
-                            if isinstance(value, list):
-                                merged.setdefault(key, []).extend(value)
-                            elif key not in merged:
-                                merged[key] = value
-                    return merged
-                    
-                except (ClientError, Exception):
-                    pass  # Fall through to non-paginated call
-            
-            # Non-paginated call
-            return method()
-            
-        except ClientError as ce:
-            raise  # Let the backoff handler deal with it
-        except Exception as e:
-            self.logger.debug(f"    Service method call error: {e}")
-            raise
 
     # --------------------------------------------------------------------------
     # RESOURCE NORMALIZATION
@@ -424,18 +413,18 @@ class AWSEngine(BaseDiscoveryEngine):
         service_name: str
     ) -> List[Dict]:
         """Extracts the list of resources from an API response."""
-        if response_key and response_key in response:
-            result = response[response_key]
-            if isinstance(result, list):
-                return result
-            return [result] if result else []
-        
         # EC2 special case: nested Reservations -> Instances
         if service_name == "ec2" and "Reservations" in response:
             instances = []
             for reservation in response["Reservations"]:
                 instances.extend(reservation.get("Instances", []))
             return instances
+            
+        if response_key and response_key in response:
+            result = response[response_key]
+            if isinstance(result, list):
+                return result
+            return [result] if result else []
         
         # Fallback: try common keys
         for key in ["Items", "Resources", "results", "data"]:
@@ -567,7 +556,7 @@ class AWSEngine(BaseDiscoveryEngine):
             return nodes
         
         self.logger.debug("    Enriching IAM secondary metadata...")
-        iam_client = self._create_boto_client("iam", "us-east-1")
+        iam_client = await self._create_boto_client("iam", "us-east-1")
         
         for node in nodes:
             if node.get("service") != "iam":
@@ -612,7 +601,7 @@ class AWSEngine(BaseDiscoveryEngine):
     # BOTO3 CLIENT FACTORY
     # --------------------------------------------------------------------------
     
-    def _create_boto_client(self, service: str, region: str):
+    async def _create_boto_client(self, service: str, region: str):
         """Creates a configured Boto3 client with proper timeout and retry settings."""
         boto_config = BotoConfig(
             retries={"max_attempts": 0, "mode": "standard"},  # We handle retries ourselves
@@ -634,10 +623,42 @@ class AWSEngine(BaseDiscoveryEngine):
                 "endpoint_url": self.localstack_endpoint,
             })
         else:
-            client_kwargs.update({
-                "aws_access_key_id": self.aws_access_key,
-                "aws_secret_access_key": self.aws_secret_key,
-            })
+            credentials = self.tenant.credentials
+            
+            if credentials.aws_assume_role_arn:
+                try:
+                    sts_client = boto3.client(
+                        'sts',
+                        region_name=region,
+                        aws_access_key_id=credentials.aws_access_key_id,
+                        aws_secret_access_key=credentials.aws_secret_access_key,
+                        config=boto_config
+                    )
+                    
+                    assumed_role = await self.execute_with_backoff(
+                        sts_client.assume_role,
+                        RoleArn=credentials.aws_assume_role_arn,
+                        RoleSessionName=f"CloudScapeDiscovery-{self.engine_id[-6:]}",
+                        DurationSeconds=3600,
+                        operation_name="STS.AssumeRole"
+                    )
+                    
+                    creds = assumed_role['Credentials']
+                    client_kwargs.update({
+                        "aws_access_key_id": creds['AccessKeyId'],
+                        "aws_secret_access_key": creds['SecretAccessKey'],
+                        "aws_session_token": creds['SessionToken'],
+                    })
+                    self.logger.debug(f"Successfully assumed role {credentials.aws_assume_role_arn}")
+                    
+                except Exception as e:
+                    self.logger.error(f"STS AssumeRole failed for {credentials.aws_assume_role_arn}: {e}")
+                    raise
+            else:
+                client_kwargs.update({
+                    "aws_access_key_id": credentials.aws_access_key_id,
+                    "aws_secret_access_key": credentials.aws_secret_access_key,
+                })
         
         return boto3.client(**client_kwargs)
 

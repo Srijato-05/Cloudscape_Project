@@ -30,31 +30,49 @@ from discovery.engines.base_engine import BaseDiscoveryEngine, EngineMode  # typ
 # 8. NETWORK SECURITY GROUP RULES: Full NSG rule extraction for attack surface.
 # ==============================================================================
 
-# Conditional Azure SDK imports with graceful fallback
-_AZURE_SDK_AVAILABLE = True
-try:
-    from azure.identity import ClientSecretCredential, DefaultAzureCredential  # type: ignore
-    from azure.mgmt.resource import ResourceManagementClient  # type: ignore
-    from azure.mgmt.compute import ComputeManagementClient  # type: ignore
-    from azure.mgmt.network import NetworkManagementClient  # type: ignore
-    from azure.mgmt.storage import StorageManagementClient  # type: ignore
-    from azure.mgmt.sql import SqlManagementClient  # type: ignore
-    from azure.mgmt.web import WebSiteManagementClient  # type: ignore
-    from azure.mgmt.keyvault import KeyVaultManagementClient  # type: ignore
-    from azure.mgmt.containerservice import ContainerServiceClient  # type: ignore
-    from azure.core.exceptions import (  # type: ignore
-        ClientAuthenticationError,
-        HttpResponseError,
-        ResourceNotFoundError,
-        ServiceRequestError,
-    )
-except ImportError:
-    _AZURE_SDK_AVAILABLE = False
-    # Create stub classes to prevent import errors when SDK is unavailable
-    ClientAuthenticationError = Exception
-    HttpResponseError = Exception
-    ResourceNotFoundError = Exception
-    ServiceRequestError = Exception
+# Azure SDK — loaded lazily so that packages installed after process start are detected.
+# Do NOT set a module-level boolean here; use _check_azure_sdk() instead.
+ClientAuthenticationError = Exception  # stubs overwritten on successful import
+HttpResponseError = Exception
+ResourceNotFoundError = Exception
+ServiceRequestError = Exception
+
+def _check_azure_sdk() -> bool:
+    """
+    Attempts to import all required Azure SDK packages at call-time.
+    Returns True if every package is available, False otherwise.
+    This avoids the module-level import-time flag that caused the engine to
+    permanently report the SDK as missing when packages were installed after
+    the process started.
+    """
+    global ClientAuthenticationError, HttpResponseError, ResourceNotFoundError, ServiceRequestError
+    try:
+        global ClientSecretCredential, DefaultAzureCredential
+        global ResourceManagementClient, ComputeManagementClient, NetworkManagementClient
+        global StorageManagementClient, SqlManagementClient, WebSiteManagementClient
+        global KeyVaultManagementClient, ContainerServiceClient
+
+        from azure.identity import ClientSecretCredential, DefaultAzureCredential  # type: ignore
+        from azure.mgmt.resource import ResourceManagementClient  # type: ignore
+        from azure.mgmt.compute import ComputeManagementClient  # type: ignore
+        from azure.mgmt.network import NetworkManagementClient  # type: ignore
+        from azure.mgmt.storage import StorageManagementClient  # type: ignore
+        from azure.mgmt.sql import SqlManagementClient  # type: ignore
+        from azure.mgmt.web import WebSiteManagementClient  # type: ignore
+        from azure.mgmt.keyvault import KeyVaultManagementClient  # type: ignore
+        from azure.mgmt.containerservice import ContainerServiceClient  # type: ignore
+        from azure.core.exceptions import (  # type: ignore
+            ClientAuthenticationError,
+            HttpResponseError,
+            ResourceNotFoundError,
+            ServiceRequestError,
+        )
+        return True
+    except ImportError:
+        return False
+
+# Keep a module-level sentinel that is resolved on first engine instantiation
+_AZURE_SDK_AVAILABLE: bool = _check_azure_sdk()
 
 
 class AzureEngine(BaseDiscoveryEngine):
@@ -79,6 +97,7 @@ class AzureEngine(BaseDiscoveryEngine):
         
         # Azure Clients (initialized lazily)
         self._credential = None
+        self._clients_initialized = False
         self._resource_client = None
         self._compute_client = None
         self._network_client = None
@@ -106,8 +125,9 @@ class AzureEngine(BaseDiscoveryEngine):
     # --------------------------------------------------------------------------
     
     def _initialize_credential(self):
-        """Creates the Azure credential object based on execution mode."""
-        if not _AZURE_SDK_AVAILABLE:
+        """Creates and validates the Azure credential object based on execution mode."""
+        # Re-check at runtime in case packages were installed after process start
+        if not _check_azure_sdk():
             self.logger.warning("Azure SDK not available. Running in stub mode.")
             return None
         
@@ -124,18 +144,24 @@ class AzureEngine(BaseDiscoveryEngine):
                 return None
         else:
             try:
-                return ClientSecretCredential(
+                credential = ClientSecretCredential(
                     tenant_id=self.azure_tenant_id,
                     client_id=self.azure_client_id,
                     client_secret=self.azure_client_secret,
                 )
+                # Proactively validate the credential
+                credential.get_token("https://management.azure.com/.default")
+                return credential
+            except ClientAuthenticationError as cae:
+                self.logger.error(f"Azure authentication failed for tenant {self.azure_tenant_id}: {cae}")
+                raise RuntimeError(f"Azure authentication failed: {cae}")
             except Exception as e:
                 self.logger.error(f"Failed to create Azure credential: {e}")
                 return None
 
     def _initialize_clients(self):
         """Initializes all Azure management clients."""
-        if not _AZURE_SDK_AVAILABLE:
+        if not _check_azure_sdk() or self._clients_initialized:
             return
         
         self._credential = self._initialize_credential()
@@ -164,6 +190,7 @@ class AzureEngine(BaseDiscoveryEngine):
             self._container_client = ContainerServiceClient(
                 self._credential, self.azure_sub_id
             )
+            self._clients_initialized = True
             self.logger.debug("Azure management clients initialized.")
         except Exception as e:
             self.logger.error(f"Failed to initialize Azure clients: {e}")
@@ -179,7 +206,7 @@ class AzureEngine(BaseDiscoveryEngine):
             self.logger.info("Azure Engine in MOCK mode. Skipping real connectivity test.")
             return True
         
-        if not _AZURE_SDK_AVAILABLE:
+        if not _check_azure_sdk():
             self.logger.warning("Azure SDK not installed. Connectivity test skipped.")
             return True
         
@@ -318,7 +345,7 @@ class AzureEngine(BaseDiscoveryEngine):
         """Discovery for LIVE mode with partitioned parallel/serial execution."""
         nodes: List[Dict[str, Any]] = []
         
-        if not _AZURE_SDK_AVAILABLE:
+        if not _check_azure_sdk():
             self.logger.error("Azure SDK not available. Cannot perform live discovery.")
             return nodes
         
@@ -358,13 +385,43 @@ class AzureEngine(BaseDiscoveryEngine):
         
         return nodes
 
+    async def _safe_list_azure(self, operation_name: str, iterator_factory: Any) -> List[Any]:
+        """
+        Safely iterates over an Azure SDK paginated list.
+
+        FIX: Collects ALL items from the Azure SDK iterator synchronously inside
+        the thread pool in a single call.  The old approach called next(page_iter)
+        one item at a time via execute_with_backoff / run_in_executor, but Python
+        3.7+ converts StopIteration into RuntimeError when it crosses a
+        coroutine/generator boundary.  That made the retry engine treat exhausted
+        iterators as transient errors and retry forever with exponential backoff.
+        """
+        def _collect_all() -> List[Any]:
+            """Runs entirely inside the thread pool — StopIteration stays local."""
+            try:
+                return list(iterator_factory())
+            except Exception:
+                # Re-raise so the caller's except block can log it
+                raise
+
+        try:
+            self.metrics.api_calls_total += 1
+            results = await self.run_in_thread(_collect_all)
+            self.metrics.api_calls_succeeded += 1
+            return results
+        except Exception as e:
+            self.metrics.api_calls_failed += 1
+            self.logger.warning(f"  [{operation_name}] iteration failed: {e}")
+            return []
+
     async def _extract_resource_groups(self) -> List[Dict[str, Any]]:
         """Extracts Azure Resource Groups."""
         nodes = []
         try:
             self.metrics.services_scanned += 1
-            rgs = await self.run_in_thread(
-                lambda: list(self._resource_client.resource_groups.list())  # type: ignore
+            rgs = await self._safe_list_azure(
+                "Azure.ResourceGroups", 
+                lambda: self._resource_client.resource_groups.list()
             )
             for rg in rgs:
                 rg_data = self._serialize_azure_object(rg)
@@ -388,8 +445,9 @@ class AzureEngine(BaseDiscoveryEngine):
                 return nodes
             
             # Virtual Machines
-            vms = await self.run_in_thread(
-                lambda: list(self._compute_client.virtual_machines.list_all())  # type: ignore
+            vms = await self._safe_list_azure(
+                "Azure.VirtualMachines",
+                lambda: self._compute_client.virtual_machines.list_all()
             )
             for vm in vms:
                 vm_data = self._serialize_azure_object(vm)
@@ -400,8 +458,9 @@ class AzureEngine(BaseDiscoveryEngine):
             
             # Virtual Machine Scale Sets
             try:
-                vmss_list = await self.run_in_thread(
-                    lambda: list(self._compute_client.virtual_machine_scale_sets.list_all())  # type: ignore
+                vmss_list = await self._safe_list_azure(
+                    "Azure.VirtualMachineScaleSets",
+                    lambda: self._compute_client.virtual_machine_scale_sets.list_all()
                 )
                 for vmss in vmss_list:
                     vmss_data = self._serialize_azure_object(vmss)
@@ -427,8 +486,9 @@ class AzureEngine(BaseDiscoveryEngine):
                 return nodes
             
             # Virtual Networks
-            vnets = await self.run_in_thread(
-                lambda: list(self._network_client.virtual_networks.list_all())  # type: ignore
+            vnets = await self._safe_list_azure(
+                "Azure.VirtualNetworks",
+                lambda: self._network_client.virtual_networks.list_all()
             )
             for vnet in vnets:
                 vnet_data = self._serialize_azure_object(vnet)
@@ -439,8 +499,9 @@ class AzureEngine(BaseDiscoveryEngine):
             
             # Network Security Groups
             try:
-                nsgs = await self.run_in_thread(
-                    lambda: list(self._network_client.network_security_groups.list_all())  # type: ignore
+                nsgs = await self._safe_list_azure(
+                    "Azure.NetworkSecurityGroups",
+                    lambda: self._network_client.network_security_groups.list_all()
                 )
                 for nsg in nsgs:
                     nsg_data = self._serialize_azure_object(nsg)
@@ -474,8 +535,9 @@ class AzureEngine(BaseDiscoveryEngine):
             if not self._storage_client:
                 return nodes
             
-            accounts = await self.run_in_thread(
-                lambda: list(self._storage_client.storage_accounts.list())  # type: ignore
+            accounts = await self._safe_list_azure(
+                "Azure.StorageAccounts",
+                lambda: self._storage_client.storage_accounts.list()
             )
             for account in accounts:
                 sa_data = self._serialize_azure_object(account)
@@ -503,8 +565,9 @@ class AzureEngine(BaseDiscoveryEngine):
             if not self._sql_client:
                 return nodes
             
-            servers = await self.run_in_thread(
-                lambda: list(self._sql_client.servers.list())  # type: ignore
+            servers = await self._safe_list_azure(
+                "Azure.SqlServers",
+                lambda: self._sql_client.servers.list()
             )
             for server in servers:
                 srv_data = self._serialize_azure_object(server)
@@ -527,8 +590,9 @@ class AzureEngine(BaseDiscoveryEngine):
             if not self._keyvault_client:
                 return nodes
             
-            vaults = await self.run_in_thread(
-                lambda: list(self._keyvault_client.vaults.list())  # type: ignore
+            vaults = await self._safe_list_azure(
+                "Azure.KeyVaults",
+                lambda: self._keyvault_client.vaults.list()
             )
             for vault in vaults:
                 vault_data = self._serialize_azure_object(vault)
@@ -551,8 +615,9 @@ class AzureEngine(BaseDiscoveryEngine):
             if not self._container_client:
                 return nodes
             
-            clusters = await self.run_in_thread(
-                lambda: list(self._container_client.managed_clusters.list())  # type: ignore
+            clusters = await self._safe_list_azure(
+                "Azure.ManagedClusters",
+                lambda: self._container_client.managed_clusters.list()
             )
             for cluster in clusters:
                 cluster_data = self._serialize_azure_object(cluster)
@@ -584,54 +649,55 @@ class AzureEngine(BaseDiscoveryEngine):
             self.metrics.services_scanned += 1
             import requests  # type: ignore
             
-            # Acquire management token
-            token_url = f"https://login.microsoftonline.com/{self.azure_tenant_id}/oauth2/v2.0/token"
-            token_data = {
-                "grant_type": "client_credentials",
-                "client_id": self.azure_client_id,
-                "client_secret": self.azure_client_secret,
-                "scope": "https://graph.microsoft.com/.default"
-            }
-            
-            token_resp = await self.run_in_thread(
-                lambda: requests.post(token_url, data=token_data, timeout=30)
-            )
-            
-            if token_resp.status_code != 200:
-                self.logger.warning(f"  Entra ID token acquisition failed: {token_resp.status_code}")
+            if not self._credential:
                 return nodes
+                
+            # Acquire management token via SDK
+            token_obj = await self.run_in_thread(
+                lambda: self._credential.get_token("https://graph.microsoft.com/.default")
+            )
+            token = token_obj.token
             
-            token = token_resp.json().get("access_token")
             if not token:
                 return nodes
             
             headers = {"Authorization": f"Bearer {token}"}
             graph_base = "https://graph.microsoft.com/v1.0"
             
+            # Helper for pagination
+            async def _fetch_graph_paginated(url: str, op_name: str) -> List[Dict]:
+                results = []
+                while url:
+                    resp = await self.run_in_thread(
+                        lambda u: requests.get(u, headers=headers, timeout=30), url
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        results.extend(data.get("value", []))
+                        url = data.get("@odata.nextLink")
+                    else:
+                        self.logger.warning(f"  [{op_name}] failed: {resp.status_code} - {resp.text}")
+                        break
+                return results
+
             # Fetch Users
-            users_resp = await self.run_in_thread(
-                lambda: requests.get(f"{graph_base}/users?$top=100", headers=headers, timeout=30)
-            )
-            if users_resp.status_code == 200:
-                for user in users_resp.json().get("value", []):
-                    user_arn = f"/tenants/{self.azure_tenant_id}/users/{user.get('id', '')}"
-                    nodes.append(self.format_urm_payload(
-                        service="entraid", resource_type="User",
-                        arn=user_arn, raw_data=user, baseline_risk=5.0
-                    ))
+            users = await _fetch_graph_paginated(f"{graph_base}/users?$top=100", "EntraID.Users")
+            for user in users:
+                user_arn = f"/tenants/{self.azure_tenant_id}/users/{user.get('id', '')}"
+                nodes.append(self.format_urm_payload(
+                    service="entraid", resource_type="User",
+                    arn=user_arn, raw_data=user, baseline_risk=5.0
+                ))
             
             # Fetch Service Principals
-            sp_resp = await self.run_in_thread(
-                lambda: requests.get(f"{graph_base}/servicePrincipals?$top=100", headers=headers, timeout=30)
-            )
-            if sp_resp.status_code == 200:
-                for sp in sp_resp.json().get("value", []):
-                    sp_arn = f"/tenants/{self.azure_tenant_id}/servicePrincipals/{sp.get('id', '')}"
-                    nodes.append(self.format_urm_payload(
-                        service="entraid", resource_type="ServicePrincipal",
-                        arn=sp_arn, raw_data=sp, baseline_risk=6.0,
-                        extra_metadata={"appId": sp.get("appId")}
-                    ))
+            sps = await _fetch_graph_paginated(f"{graph_base}/servicePrincipals?$top=100", "EntraID.ServicePrincipals")
+            for sp in sps:
+                sp_arn = f"/tenants/{self.azure_tenant_id}/servicePrincipals/{sp.get('id', '')}"
+                nodes.append(self.format_urm_payload(
+                    service="entraid", resource_type="ServicePrincipal",
+                    arn=sp_arn, raw_data=sp, baseline_risk=6.0,
+                    extra_metadata={"appId": sp.get("appId")}
+                ))
             
             self.logger.debug(f"  Extracted {len(nodes)} Entra ID objects.")
         except ImportError:

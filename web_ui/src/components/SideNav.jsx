@@ -18,7 +18,6 @@ export default function SideNav() {
       items={[
         { type: 'link', text: 'Mission Dashboard', href: '/' },
         { type: 'link', text: 'Multi-Cloud Topology', href: '/map' },
-        { type: 'link', text: 'Blast Radius Engine', href: '/blast-radius' },
         { type: 'link', text: 'Forensic Timeline', href: '/timeline' },
         { type: 'link', text: 'Security Events & Alerts', href: '/events' },
         { type: 'divider' },

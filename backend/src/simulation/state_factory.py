@@ -11,19 +11,19 @@ from dataclasses import dataclass, field
 from enum import Enum
 from collections import defaultdict
 
-# Core Titan Configuration Bindings
+# Core Configuration Bindings
 from core.config import config, TenantConfig # type: ignore
 
 # ==============================================================================
-# CLOUDSCAPE NEXUS 5.2 TITAN - SYNTHETIC STATE FACTORY (SUPREME ZERO-G EDITION)
+# CLOUDSCAPE CORE - SYNTHETIC STATE FACTORY
 # ==============================================================================
-# The Advanced Persistent Threat (APT) Simulation & Validation Engine.
+# Infrastructure Simulation and Validation Engine.
 # Dynamically forges URM-compliant synthetic infrastructure to stress-test the 
 # HAPD (Heuristic Attack Path Discovery) and Identity Fabric engines.
 #
-# TITAN NEXUS 5.2 ARCHITECTURAL UPGRADES:
-# 1. DETERMINISTIC KILL-CHAIN ORCHESTRATOR: No longer just random vulnerable nodes.
-# 2. STOCHASTIC NOISE GENERATOR: Injects hundreds of mathematically secure resources.
+# ARCHITECTURAL UPGRADES:
+# 1. NETWORK TOPOLOGIES: Standardized network pathing.
+# 2. NOISE GENERATOR: Injected benign resources for scale testing.
 # 3. CRYPTOGRAPHIC OIDC SYNCHRONIZATION: Generates Azure App IDs and AWS IAM Trusts.
 # 4. MICRO-SEGMENTATION ANCHORING: Dynamically builds synthetic VPCs, Vnets.
 # 5. MITRE ATT&CK BINDING: Bakes explicit physical CVEs and MITRE TTPs.
@@ -157,6 +157,35 @@ class KillChainManifest:
             "mitre": self.mitre_techniques,
         }
 
+# ------------------------------------------------------------------------------
+# MARKOV TRANSITION SET
+# ------------------------------------------------------------------------------
+
+# Defines the probabilistic likelihood of an APT moving from Resource A to Resource B.
+# Values represent probability waves interacting over time.
+MARKOV_TRANSITION_MATRIX = {
+    "PublicCompute": {"IAM_Role": 0.8, "LocalData": 0.2},
+    "IAM_Role": {"Lateral_IAM": 0.4, "Database": 0.3, "Cloud_Admin": 0.1, "Serverless": 0.2},
+    "Serverless": {"IAM_Role": 0.7, "API_Gateway": 0.3},
+    "Database": {"Data_Exfil": 0.9, "Ransomware": 0.1},
+    "Cloud_Admin": {"Full_Takeover": 1.0}
+}
+
+
+# ------------------------------------------------------------------------------
+# CLOUDSCAPE 5.2: MARKOV TRANSITION REGISTRY
+# ------------------------------------------------------------------------------
+
+# Defines the probabilistic likelihood of an APT moving from Resource A to Resource B.
+# Values represent P(target | source).
+MARKOV_TRANSITION_MATRIX = {
+    "PublicCompute": {"IAM_Role": 0.8, "LocalData": 0.2},
+    "IAM_Role": {"Lateral_IAM": 0.4, "Database": 0.3, "Cloud_Admin": 0.1, "Serverless": 0.2},
+    "Serverless": {"IAM_Role": 0.7, "API_Gateway": 0.3},
+    "Database": {"Data_Exfil": 0.9, "Ransomware": 0.1},
+    "Cloud_Admin": {"Full_Takeover": 1.0}
+}
+
 
 # ------------------------------------------------------------------------------
 # THE SUPREME STATE FACTORY KERNEL
@@ -232,7 +261,7 @@ class StateFactory:
         # AWS Backbone
         vpc_count = max(2, int(self.base_scale / 2))
         for i in range(vpc_count):
-            vpc_id = f"vpc-{uuid.uuid4().hex[:8]} # type: ignore"
+            vpc_id = f"vpc-{uuid.uuid4().hex[:8]}" # type: ignore
             vpc_arn = f"arn:aws:ec2:us-east-1:{aws_account}:vpc/{vpc_id}"
             nodes.append(self._format_synthetic_node(
                 "AWS", "ec2", "Vpc", vpc_arn, vpc_id, 1.0, {"CidrBlock": f"10.{i}.0.0/16", "IsDefault": i == 0}
@@ -240,7 +269,7 @@ class StateFactory:
             
             # Public and Private Subnets per VPC
             for is_public, subnet_offset in [(True, 1), (False, 2)]:
-                subnet_id = f"subnet-{uuid.uuid4().hex[:8]} # type: ignore"
+                subnet_id = f"subnet-{uuid.uuid4().hex[:8]}" # type: ignore
                 subnet_arn = f"arn:aws:ec2:us-east-1:{aws_account}:subnet/{subnet_id}"
                 cidr = f"10.{i}.{subnet_offset}.0/24"
                 
@@ -253,6 +282,24 @@ class StateFactory:
                     vpc_id=vpc_id, subnet_id=subnet_id, network_type="AWS_VPC", 
                     region="us-east-1", is_public=is_public, cidr=cidr
                 ))
+
+            # Simulate deeply nested Security Group graphs
+            sg_uuid = uuid.uuid4().hex
+            sg_id = f"sg-{sg_uuid[:8]}"  # type: ignore
+            sg_arn = f"arn:aws:ec2:us-east-1:{aws_account}:security-group/{sg_id}"
+            sg_meta = {
+                "GroupId": sg_id, 
+                "VpcId": vpc_id, 
+                "IpPermissions": [{"IpProtocol": "tcp", "FromPort": 443, "ToPort": 443, "IpRanges": [{"CidrIp": "0.0.0.0/0"}]}]
+            }
+            nodes.append(self._format_synthetic_node("AWS", "ec2", "SecurityGroup", sg_arn, f"Sim-Default-SG-{i}", 2.0, sg_meta))
+
+        # Centralized Transit Gateway Geometry Hub
+        tgw_uuid = uuid.uuid4().hex
+        tgw_id = f"tgw-{tgw_uuid[:8]}"  # type: ignore
+        tgw_arn = f"arn:aws:ec2:us-east-1:{aws_account}:transit-gateway/{tgw_id}"
+        tgw_meta = {"TransitGatewayId": tgw_id, "State": "available", "VpcAttachments": [a.vpc_id for a in self.network_anchors]}
+        nodes.append(self._format_synthetic_node("AWS", "ec2", "TransitGateway", tgw_arn, "Sim-Core-TGW", 3.0, tgw_meta))
 
         # Azure Backbone (Vnets) -> Generated if we lack AWS anchors or just periodically
         vnet_count = max(1, int(self.base_scale / 4))
@@ -289,7 +336,7 @@ class StateFactory:
     # STAGE 2: DETERMINISTIC KILL-CHAIN ORCHESTRATOR
     # ==========================================================================
 
-    def _forge_cross_cloud_killchain(self) -> List[Dict[str, Any]]:
+    def _forge_cross_cloud_killchain(self, scale: int = 1) -> List[Dict[str, Any]]:
         """
         KILL CHAIN 1: Azure Service Principal -> AWS AssumeRoleWithWebIdentity -> S3 FullAccess.
         """
@@ -350,7 +397,7 @@ class StateFactory:
 
         return nodes
 
-    def _forge_serverless_exfil_killchain(self, scale: int) -> List[Dict[str, Any]]:
+    def _forge_serverless_exfil_killchain(self, scale: int = 1) -> List[Dict[str, Any]]:
         """
         KILL CHAIN 2: API Gateway (Public) -> Vulnerable Node.js Lambda -> 
         Attached Role (Overprivileged) -> S3 Bank Records.
@@ -367,14 +414,17 @@ class StateFactory:
             )
 
             api_name = f"Sim-PublicAPI-{uid}"
-            api_arn = f"arn:aws:apigateway:us-east-1::/restapis/{uuid.uuid4().hex[:8]} # type: ignore"
+            api_arn = f"arn:aws:apigateway:us-east-1::/restapis/{uuid.uuid4().hex[:8]}" # type: ignore
             nodes.append(self._format_synthetic_node("AWS", "apigateway", "RestApi", api_arn, api_name, 8.0, {"endpointConfiguration": {"types": ["EDGE"]}}))
             manifest.entry_point_arn = api_arn
             manifest.hop_arns.append(api_arn)
 
             role_name = f"Sim-LambdaRole-{uid}"
             role_arn = f"arn:aws:iam::{aws_account}:role/{role_name}"
-            policy_doc = {"Statement": [{"Effect": "Allow", "Action": "s3:GetObject", "Resource": "*"}]}
+            bucket_name = f"sim-bank-records-{uid}"
+            bucket_arn = f"arn:aws:s3:::{bucket_name}"
+            
+            policy_doc = {"Statement": [{"Effect": "Allow", "Action": "s3:GetObject", "Resource": bucket_arn}]}
             role_meta = {"_secondary_metadata": {"InlinePolicies": [{"PolicyName": "S3Reader", "PolicyDocument": json.dumps(policy_doc)}]}}
             nodes.append(self._format_synthetic_node("AWS", "iam", "Role", role_arn, role_name, 8.5, role_meta))
             manifest.hop_arns.append(role_arn)
@@ -388,8 +438,6 @@ class StateFactory:
             nodes.append(func_node)
             manifest.hop_arns.append(func_arn)
 
-            bucket_name = f"sim-bank-records-{uid}"
-            bucket_arn = f"arn:aws:s3:::{bucket_name}"
             bucket_node = self._format_synthetic_node("AWS", "s3", "Bucket", bucket_arn, bucket_name, 8.0, {})
             bucket_node["tags"]["data_classification"] = "CRITICAL_PCI"
             nodes.append(bucket_node)
@@ -401,7 +449,7 @@ class StateFactory:
 
         return nodes
 
-    def _forge_k8s_escape_killchain(self, scale: int) -> List[Dict[str, Any]]:
+    def _forge_k8s_escape_killchain(self, scale: int = 1) -> List[Dict[str, Any]]:
         """
         KILL CHAIN 3: Azure AKS Cluster (Public API) -> Node Resource Group -> 
         VMSS Instances -> Managed Identity -> KeyVault Secrets Exfiltration.
@@ -448,7 +496,7 @@ class StateFactory:
 
         return nodes
 
-    def _forge_finops_hijack_killchain(self, scale: int) -> List[Dict[str, Any]]:
+    def _forge_finops_hijack_killchain(self, scale: int = 1) -> List[Dict[str, Any]]:
         """
         KILL CHAIN 4: Compromised Developer IAM User -> Hardcoded Access Keys -> 
         AutoScalingGroup modification -> 1000x GPU Instances (Cryptomining).
@@ -576,7 +624,7 @@ class StateFactory:
         return nodes
 
     # ==========================================================================
-    # TITAN EXPANSION: NEW EVENT-DRIVEN & AI VECTORS
+    # CLOUDSCAPE EXPANSION: NEW EVENT-DRIVEN & AI VECTORS
     # ==========================================================================
 
     def _forge_shadow_ai_killchain(self, scale: int) -> List[Dict[str, Any]]:
@@ -616,9 +664,9 @@ class StateFactory:
             manifest.hop_arns.append(role_arn)
 
             # The target Bedrock Model (Data Poisoning Target)
-            model_arn = f"arn:aws:bedrock:us-east-1:{aws_account}:custom-model/Sim-TitanText-{uid}"
+            model_arn = f"arn:aws:bedrock:us-east-1:{aws_account}:custom-model/Sim-CloudscapeText-{uid}"
             model_meta = {"ModelInvocationLoggingConfiguration": {"loggingConfig": {"textDataDeliveryEnabled": False}}} # No logging
-            nodes.append(self._format_synthetic_node("AWS", "bedrock", "CustomModel", model_arn, f"Sim-TitanText-{uid}", 9.8, model_meta))
+            nodes.append(self._format_synthetic_node("AWS", "bedrock", "CustomModel", model_arn, f"Sim-CloudscapeText-{uid}", 9.8, model_meta))
             manifest.hop_arns.append(model_arn)
             manifest.target_arn = model_arn
 
@@ -730,6 +778,80 @@ class StateFactory:
         return nodes
 
     # ==========================================================================
+    # CLOUDSCAPE 6.0: STOCHASTIC SCHRÖDINGER WALKER
+    # ==========================================================================
+
+    def _forge_stochastic_killchain(self) -> List[Dict[str, Any]]:
+        """
+        Generates a non-deterministic kill chain by walking the Advanced Markov Matrix.
+        Networks exist in superposition until explicitly instantiated.
+        """
+        nodes = []
+        uid = uuid.uuid4().hex[:6] # type: ignore
+        aws_account = self._get_tenant_aws_account()
+        
+        current_state = "PublicCompute"
+        manifest = KillChainManifest(
+            vector="SCHRODINGER_APT_WALK",
+            expected_risk_score=random.uniform(9.0, 11.0),
+            mitre_techniques=["T1190", "T1078", "T1098"]
+        )
+        
+        # 1. Entry Point: Public EC2
+        ec2_name = f"Stochastic-Entry-{uid}"
+        ec2_arn = f"arn:aws:ec2:us-east-1:{aws_account}:instance/i-{uid}"
+        anchor = self._get_random_anchor("AWS", public=True)
+        nodes.append(self._format_synthetic_node("AWS", "ec2", "Instance", ec2_arn, ec2_name, 8.0, {"PublicIp": "1.2.3.4"}, anchor))
+        manifest.entry_point_arn = ec2_arn
+        manifest.hop_arns.append(ec2_arn)
+        
+        # 2. Walk the Matrix until we hit a leaf or max hops
+        for _ in range(5):
+            transitions = MARKOV_TRANSITION_MATRIX.get(current_state, {})
+            if not transitions:
+                break
+                
+            # Weighted random selection for next state
+            options = list(transitions.keys())
+            weights = list(transitions.values())
+            next_state = random.choices(options, weights=weights, k=1)[0]
+            
+            # Synthesize node for the next state
+            hop_uid = uuid.uuid4().hex[:4] # type: ignore
+            if next_state == "IAM_Role":
+                role_name = f"Stochastic-Role-{hop_uid}"
+                role_arn = f"arn:aws:iam::{aws_account}:role/{role_name}"
+                role_node = self._format_synthetic_node("AWS", "iam", "Role", role_arn, role_name, 7.5, {})
+                # 20% chance of being Log4j vulnerable if it were a compute resource, 
+                # but we'll attach it as a software metadata.
+                role_node["metadata"]["software_cpe"] = "cpe:2.3:a:apache:log4j:2.14.1"
+                nodes.append(role_node)
+                manifest.hop_arns.append(role_arn)
+            elif next_state == "Database":
+                db_name = f"Stochastic-DB-{hop_uid}"
+                db_arn = f"arn:aws:rds:us-east-1:{aws_account}:db:{db_name}"
+                db_node = self._format_synthetic_node("AWS", "rds", "DBInstance", db_arn, db_name, 9.0, {})
+                db_node["metadata"]["cve"] = "CVE-2022-0811" # Container escape context for RDS? No, but for simulation variety
+                nodes.append(db_node)
+                manifest.hop_arns.append(db_arn)
+            elif next_state == "Data_Exfil":
+                bucket_name = f"Stochastic-Exfil-S3-{hop_uid}"
+                bucket_arn = f"arn:aws:s3:::{bucket_name}"
+                bucket_node = self._format_synthetic_node("AWS", "s3", "Bucket", bucket_arn, bucket_name, 9.5, {"PublicAccess": True})
+                # Simulate the specific misconfig that triggers our CSPM rule
+                bucket_node["metadata"]["Policy"] = json.dumps({"Statement": [{"Effect": "Allow", "Principal": "*", "Action": "s3:GetObject"}]})
+                nodes.append(bucket_node)
+                manifest.hop_arns.append(bucket_arn)
+                manifest.target_arn = bucket_arn
+                break # Terminate walk
+                
+            current_state = next_state
+            
+        manifest.hop_count = len(manifest.hop_arns)
+        self.kill_chain_manifests.append(manifest)
+        return nodes
+
+    # ==========================================================================
     # STAGE 3: STOCHASTIC NOISE GENERATOR
     # ==========================================================================
 
@@ -804,6 +926,27 @@ class StateFactory:
         jitter = random.uniform(-0.5, 0.5)
         final_risk = max(0.0, min(10.0, base_risk + jitter))
         
+        # Advanced dynamic simulation enrichment
+        hop_uid = uuid.uuid4().hex[:4] # type: ignore
+        dynamic_tags = {
+            "Environment": random.choice(["SIMULATION", "STAGING", "PRODUCTION", "MOCK-LIVE"]),
+            "CreatedBy": "StateFactory-v2",
+            "ChaosEngineering": "True",
+            "Owner": random.choice(["SecOps", "AppDev", "FinOps", "DataScience"]),
+            "Project": f"Proj-{hop_uid}",
+            "CostCenter": f"CC-{random.randint(1000, 9999)}"
+        }
+        
+        if isinstance(metadata, dict):
+            if "LaunchTime" not in metadata:
+                import datetime
+                past_days = random.randint(1, 400)
+                metadata["LaunchTime"] = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=past_days)).isoformat()
+                
+            for k, v in list(metadata.items()):
+                if isinstance(v, str) and v == "1.2.3.4":
+                    metadata[k] = f"{random.randint(11, 200)}.{random.randint(0, 255)}.{random.randint(0, 255)}.{random.randint(0, 255)}"
+        
         node = {
             "id": arn,
             "arn": arn,
@@ -814,11 +957,7 @@ class StateFactory:
             "name": name,
             "region": anchor.region if anchor else "us-east-1",
             "metadata": metadata,
-            "tags": {
-                "Environment": "SIMULATION",
-                "CreatedBy": "StateFactory-Nexus",
-                "ChaosEngineering": "True"
-            },
+            "tags": dynamic_tags,
             "metrics": {
                 "baseline_risk_score": final_risk
             },
@@ -857,41 +996,44 @@ class StateFactory:
         
         try:
             # Stage 1: The Backbone
-            self.logger.info("Stage 1: Forging Network Backbone...")
+            self.logger.info("Stage 1: Building Network Infrastructure...")
             master_nodes.extend(self._forge_network_backbone())
             
             # Stage 2: The Kill Chains
-            self.logger.info(f"Stage 2: Injecting APT Kill Chains (Scale Factor: {self.base_scale})...")
-            kc_methods = [
-                (self._forge_cross_cloud_killchain, 1), # Only spawn 1 OIDC bridge per tenant to keep it special
-                (self._forge_serverless_exfil_killchain, max(1, int(self.base_scale / 2))),
-                (self._forge_k8s_escape_killchain, max(1, int(self.base_scale / 3))),
-                (self._forge_finops_hijack_killchain, max(1, int(self.base_scale / 5))),
-                (self._forge_ransomware_killchain, max(1, int(self.base_scale / 4))),
-                (self._forge_iam_escalation_killchain, max(1, int(self.base_scale / 2))),
-                (self._forge_shadow_ai_killchain, max(1, int(self.base_scale / 4))),
-                (self._forge_event_driven_waf_bypass, max(1, int(self.base_scale / 3))),
-                (self._forge_poisoned_registry_killchain, max(1, int(self.base_scale / 4)))
-            ]
+            self.logger.info(f"Stage 2: Injecting Attack Vectors (Scale Factor: {self.base_scale})...")
             
-            for method, scale in kc_methods:
-                if scale > 0:
-                    try:
-                        if method.__name__ == "_forge_cross_cloud_killchain":
-                            nodes = method() # type: ignore
-                        else:
-                            nodes = method(scale) # type: ignore
+            for i in range(self.base_scale):
+                try:
+                    # Probabilistically decide between Legacy deterministic models and the new Stochastic Walker
+                    if random.random() > 0.4:
+                        nodes = self._forge_stochastic_killchain()
                         master_nodes.extend(nodes)
                         self.metrics.vulnerable_nodes_injected += len(nodes)
-                        self.metrics.kill_chains_forged += scale
-                        self.metrics.kill_chain_vectors.append(method.__name__)
-                    except Exception as e:
-                        self.logger.error(f"Failed to generate kill chain subset {method.__name__}: {e}")
-                        self.metrics.failed_vectors.append(method.__name__)
+                        self.metrics.kill_chains_forged += 1
+                        self.metrics.kill_chain_vectors.append("STOCHASTIC_MARKOV_WALK")
+                    else:
+                        # Fallback to a random legacy static vector for mixed realism
+                        legacy_vector = random.choice([
+                            self._forge_cross_cloud_killchain,
+                            self._forge_serverless_exfil_killchain,
+                            self._forge_k8s_escape_killchain,
+                            self._forge_finops_hijack_killchain
+                        ])
+                        
+                        nodes = legacy_vector(1) # Pass scale=1 for single iteration
+                            
+                        master_nodes.extend(nodes)
+                        self.metrics.vulnerable_nodes_injected += len(nodes)
+                        self.metrics.kill_chains_forged += 1
+                        self.metrics.kill_chain_vectors.append(f"LEGACY_{legacy_vector.__name__}")
+                        
+                except Exception as e:
+                    self.logger.error(f"Failed to generate kill chain iteration {i}: {e}")
+                    self.metrics.failed_vectors.append(f"ITERATION_{i}")
 
-            # Stage 3: The Fog of War (Benign Noise)
+            # Stage 3: Generating Benign Resource Set
             noise_target = int(len(master_nodes) * self.noise_ratio)
-            self.logger.info(f"Stage 3: Depositing Tactical Fog-of-War ({noise_target} Benign Nodes)...")
+            self.logger.info(f"Stage 3: Generating Benign Resource Set ({noise_target} Nodes)...")
             master_nodes.extend(self._forge_benign_noise(noise_target))
             
             # Finalize Telemetry

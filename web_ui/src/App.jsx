@@ -5,7 +5,6 @@ import TopNav from './components/TopNav';
 import SideNav from './components/SideNav';
 import Dashboard from './pages/Dashboard';
 import InfrastructureMap from './pages/InfrastructureMap';
-import BlastRadius from './pages/BlastRadius';
 import ForensicTimeline from './pages/ForensicTimeline';
 import SecurityEvents from './pages/SecurityEvents';
 
@@ -28,7 +27,6 @@ function App() {
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/map" element={<InfrastructureMap />} />
-            <Route path="/blast-radius" element={<BlastRadius />} />
             <Route path="/timeline" element={<ForensicTimeline />} />
             <Route path="/events" element={<SecurityEvents />} />
           </Routes>

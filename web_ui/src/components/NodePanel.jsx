@@ -1,3 +1,5 @@
+import { useState, useEffect } from 'react';
+import axios from 'axios';
 import useStore from '../stores/useStore';
 import Button from '@cloudscape-design/components/button';
 import SpaceBetween from '@cloudscape-design/components/space-between';
@@ -77,6 +79,16 @@ function getRiskColor(score) {
 
 export default function NodePanel() {
   const { selectedNode, setSelectedNode } = useStore();
+  const [driftHistory, setDriftHistory] = useState([]);
+
+  useEffect(() => {
+    if (selectedNode) {
+      const arn = selectedNode.arn || selectedNode.id;
+      axios.get(`http://localhost:4000/api/forensics/drift/${encodeURIComponent(arn)}`)
+        .then(res => setDriftHistory(res.data || []))
+        .catch(e => console.error(e));
+    }
+  }, [selectedNode]);
 
   if (!selectedNode) return null;
 
@@ -90,17 +102,36 @@ export default function NodePanel() {
     <div className="node-panel">
       <SpaceBetween size="m">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Box variant="h2" margin="none">Resource Details</Box>
+          <Box variant="h2" margin="none">Resource Intelligence</Box>
           <Button variant="inline-icon" iconName="close" onClick={handleClose} />
         </div>
 
-        {/* Name & Type */}
+        {/* ... existing fields ... */}
         <div>
-          <Box variant="small" color="text-status-inactive">Name</Box>
+          <Box variant="small" color="text-status-inactive">Resource Name</Box>
           <Box variant="p" margin="none" fontSize="heading-m">
             {selectedNode.name || 'Unnamed Resource'}
           </Box>
         </div>
+
+        {/* Deep Drift History Section */}
+        {driftHistory.length > 0 && (
+          <div>
+            <Box variant="small" color="text-status-inactive">Historical Property Drift</Box>
+            <SpaceBetween size="s">
+              {driftHistory.map((entry, idx) => (
+                <div key={idx} style={{ padding: '10px', background: 'rgba(255, 165, 0, 0.05)', borderLeft: '3px solid #ff9900', borderRadius: '4px', marginTop: '5px' }}>
+                  <Box variant="small"><strong>{new Date(entry.timestamp).toLocaleString()}</strong> (Scan: {entry.scan_id})</Box>
+                  <pre style={{ fontSize: '11px', margin: '5px 0 0 0', color: '#ccc', overflowX: 'auto' }}>
+                    {JSON.stringify(entry.changes, null, 2)}
+                  </pre>
+                </div>
+              ))}
+            </SpaceBetween>
+          </div>
+        )}
+
+        {/* Security Findings ... */}
 
         <div>
           <Box variant="small" color="text-status-inactive">Type</Box>
@@ -135,6 +166,34 @@ export default function NodePanel() {
             {RISK_DESCRIPTIONS[riskLevel]}
           </Box>
         </div>
+
+        {/* Vulnerabilities & Security Findings */}
+        {selectedNode.vulnerabilities && selectedNode.vulnerabilities.length > 0 && (
+          <div>
+            <Box variant="small" color="text-status-inactive">Security Findings & Vulnerabilities</Box>
+            <SpaceBetween size="s">
+              {selectedNode.vulnerabilities.map((v, idx) => (
+                <div key={idx} style={{ padding: '12px', background: 'rgba(200, 30, 30, 0.08)', borderLeft: '4px solid #ef4444', borderRadius: '6px', marginTop: '8px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                    <Box variant="h4" margin="none" color="text-status-error">
+                      {v.id || v.rule || 'Vulnerability Detected'}
+                    </Box>
+                    <Badge color="red">{v.severity || 'HIGH'}</Badge>
+                  </div>
+                  <Box variant="p" fontSize="body-s" margin={{ top: 'none', bottom: 'xs' }}>
+                    {v.description}
+                  </Box>
+                  <div style={{ padding: '8px', background: 'rgba(10, 200, 50, 0.05)', borderRadius: '4px', border: '1px solid rgba(10, 200, 50, 0.2)' }}>
+                    <Box variant="small" color="text-status-success">
+                      <strong>Remediation Playbook:</strong><br/>
+                      {v.remediation}
+                    </Box>
+                  </div>
+                </div>
+              ))}
+            </SpaceBetween>
+          </div>
+        )}
 
         {/* ID */}
         <div>
