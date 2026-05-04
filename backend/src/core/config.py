@@ -10,6 +10,9 @@ import traceback
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Union, Set
 from datetime import datetime, timezone
+import io
+from rich.console import Console # type: ignore
+from rich.logging import RichHandler # type: ignore
 
 from pydantic import ( # pyre-ignore[21]
     BaseModel, 
@@ -21,15 +24,21 @@ from pydantic import ( # pyre-ignore[21]
     ConfigDict
 )
 
+__all__ = ["logger", "settings", "tenants", "log_console", "ConfigurationManager"]
+
+# Global Log Console for HTML Export (Buffered for bit-perfect forensic capture)
+log_buffer = io.StringIO()
+log_console = Console(record=True, width=150, file=log_buffer, force_terminal=True)
+
 # ==============================================================================
-# CLOUDSCAPE NEXUS 5.2 TITAN - CONFIGURATION MANAGER (SOVEREIGN-FORENSIC EDITION)
+# CLOUDSCAPE - CONFIGURATION MANAGER
 # ==============================================================================
 # The strict Type-Safe configuration gateway powered by Pydantic V2.
 # 
-# TITAN NEXUS 5.2 UPGRADES ACTIVE:
+# CLOUDSCAPE CORE 5.2 UPGRADES ACTIVE:
 # 1. Azure Crawling Restored: Re-injected the CrawlingConfig block to cure the 
 #    AttributeError crashing the Azure physical extraction sensor.
-# 2. Sovereign-Forensic Matrix: Added dedicated structures for Zero-Trust Mesh 
+# 2. Enterprise Matrix: Added dedicated structures for Zero-Trust Mesh 
 #    (Tailscale/WireGuard), Privacy Proxies (Presidio), and FinOps Cost-Gravity.
 # 3. The "Zero-None" Guarantee: Absolute defaults injected to prevent malformed 
 #    ARNs (e.g., arn:aws:ec2:us-east-1:None:...) during Graph linking.
@@ -45,15 +54,15 @@ from pydantic import ( # pyre-ignore[21]
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
-# 1. CORE SYSTEM & SOVEREIGN-FORENSIC MODELS
+# 1. CORE SYSTEM & ENTERPRISE MODELS
 # ------------------------------------------------------------------------------
 
 class AppMetadata(BaseModel):
     """Application identity and versioning metadata."""
-    name: str = Field(default="CloudScape-Nexus-Titan")
-    version: str = Field(default="5.2.0")
-    author: str = Field(default="Aether-Titan-Engineering")
-    description: str = Field(default="Sovereign-Forensic Multi-Cloud Intelligence Mesh")
+    name: str = Field(default="Cloudscape")
+    version: str = Field(default="15.0.0")
+    author: str = Field(default="Enterprise-Aether")
+    description: str = Field(default="Apex autonomous cyber-warfare and security architecture")
     environment: str = Field(default="MOCK")
     strict_mode: bool = Field(default=True, description="Halt execution on any non-transient schema fault.")
 
@@ -177,7 +186,7 @@ class CrawlingConfig(BaseModel):
     timeout_seconds: int = Field(default=30, ge=5, le=300)
     fail_open_on_access_denied: bool = Field(default=False)
     verify_ssl: bool = Field(default=True)
-    user_agent: str = Field(default="CloudScape-Nexus-Titan/5.2")
+    user_agent: str = Field(default="CloudScape/15.0")
     max_pagination_depth: int = Field(default=100, ge=10, le=10000)
     concurrency_limit: int = Field(default=5, ge=1, le=100)
     max_worker_threads: int = Field(default=5, ge=1, le=50)
@@ -199,7 +208,7 @@ class DatabaseConfig(BaseModel):
     """
     Database connection and pooling configuration.
     
-    TITAN PHYSICAL ALIAS MAPPING: Guarantees connection pooling survival 
+    CLOUDSCAPE PHYSICAL ALIAS MAPPING: Guarantees connection pooling survival 
     during Graceful Teardown. Supports both `uri` and `neo4j_uri` YAML keys.
     """
     neo4j_uri: str = Field(
@@ -263,7 +272,7 @@ class OrchestratorConfig(BaseModel):
 
 
 class ForensicsConfig(BaseModel):
-    """Configuration for the Sovereign-Forensic evidence vault."""
+    """Configuration for the Enterprise evidence vault."""
     log_path: str = Field(default="forensics/logs")
     report_path: str = Field(default="forensics/reports")
     bson_ledger_path: str = Field(default="forensics/bson_ledger")
@@ -491,7 +500,7 @@ class Settings(BaseModel):
     @classmethod
     def validate_execution_mode(cls, v: str) -> str:
         """Normalizes execution mode to uppercase."""
-        valid_modes = {"MOCK", "LIVE", "HYBRID", "DRY_RUN"}
+        valid_modes = {"MOCK", "LIVE", "HYBRID", "DRY_RUN", "PLAYBACK"}
         normalized = v.upper().strip()
         if normalized not in valid_modes:
             return "MOCK"
@@ -534,12 +543,6 @@ class ConfigurationManager:
     Initializes logging, establishes absolute file paths, parses YAML state, 
     applies environment variable overrides, and holds the configuration in 
     a stable memory address for the lifespan of the application.
-    
-    TITAN 5.2 UPGRADES:
-    - Comprehensive environment variable override matrix
-    - Configuration hash fingerprinting for change detection
-    - Runtime introspection and diff capabilities
-    - Graceful degradation on missing config files
     """
     
     # Class-level initialization tracking to prevent double-init
@@ -547,17 +550,32 @@ class ConfigurationManager:
     _config_hash: str = ""
     
     def __init__(self):
-        # Establish absolute paths dynamically regardless of where main.py is executed
-        self.base_dir = Path(__file__).resolve().parent.parent.parent
-        self.config_dir = self.base_dir / "config"
-        self.registry_dir = self.base_dir / "config"
+        # Establish absolute paths dynamically - Point to the Cloudscape root
+        self.base_dir = Path(__file__).resolve().parent.parent.parent.parent
+        self.config_dir = self.base_dir / "backend" / "config"
+        self.registry_dir = self.base_dir / "backend" / "config"
         
-        # Early Logging Bootstrap (Before main.py fully takes over)
-        logging.basicConfig(
-            level=logging.INFO,
-            format="%(asctime)s | %(levelname)-8s | %(name)-35s | %(message)s"
-        )
+        # Early Logging Bootstrap (Dual-Track: Console + Buffered HTML Audit)
+        log_format = "%(name)-35s | %(message)s"
+        
+        # Explicitly configure the root logger handlers to prevent initialization bypass
+        root_logger = logging.getLogger()
+        root_logger.setLevel(logging.INFO)
+        
+        # Clean existing handlers to avoid duplicates
+        for handler in list(root_logger.handlers):
+            root_logger.removeHandler(handler)
+            
+        # Add Console Handler (Standard Output)
+        console_handler = RichHandler(show_time=True, show_path=False, markup=True)
+        root_logger.addHandler(console_handler)
+        
+        # Add HTML Buffer Handler (Captured for final export)
+        html_handler = RichHandler(console=log_console, show_time=True, show_path=False, markup=True)
+        root_logger.addHandler(html_handler)
+        
         self.logger = logging.getLogger("CloudScape.Core.Config")
+        self.logger.info("Integrated HTML Forensic Logging active.")
         
         # State Containers
         self.settings: Optional[Settings] = None
@@ -574,7 +592,7 @@ class ConfigurationManager:
         self._compute_config_fingerprint()
         
         ConfigurationManager._instance_initialized = True
-        self.logger.info("Configuration Manager Initialized. Sovereign-Forensic Matrix Locked.")
+        self.logger.info("Configuration Manager Initialized. Enterprise Matrix Locked.")
 
     def _load_settings(self) -> None:
         """Loads and mathematically validates the main configuration matrix."""
@@ -587,7 +605,7 @@ class ConfigurationManager:
                     raw_settings = yaml.safe_load(file) or {}
                 self.logger.debug(f"Loaded settings.yaml with {len(raw_settings)} top-level keys.")
             else:
-                self.logger.warning(f"Master configuration missing at {settings_path}. Booting with Titan Engine Defaults.")
+                self.logger.warning(f"Master configuration missing at {settings_path}. Booting with Cloudscape Engine Defaults.")
                 
             # Overlay legacy service_registry.json if present
             registry_path = self.config_dir / "service_registry.json"
@@ -916,4 +934,8 @@ class ConfigurationManager:
 
 # Export the absolute singleton instance. 
 # This locks configuration into memory and prevents async drift.
+# [SUPREME CORE 5.2] Explicit symbol elevation for cross-module visibility.
 config = ConfigurationManager()
+settings = config.settings
+tenants = config.tenants
+logger = config.logger

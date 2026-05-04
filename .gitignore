@@ -19,14 +19,14 @@ __pycache__/
 .installed.cfg
 .pip-wheel-metadata/
 
-# --- [2] CLOUDSCAPE VAULT (E: DRIVE REDIRECTION) ---
-# We ignore all local persistence to keep the repo lightweight
+# --- [2] PERSISTENCE & DATA ---
 logs/
 manifests/
 neo4j_data/
 moto_data/
 disk/
 volume/
+forensics/
 tests/data/
 *.log
 *.json
@@ -71,3 +71,19 @@ htmlcov/
 Thumbs.db
 desktop.ini
 $RECYCLE.BIN/
+
+# --- [7] LOCAL GENERATED FILES & SCRIPTS ---
+reports/
+.gemini/
+*_out.txt
+*_utf8.txt
+run.txt
+scan_out.txt
+sim_output.txt
+fix_orchestrator.py
+run_tests.py
+organize.py
+setup_env.ps1
+debug_test.py
+test_output.log
+test_orchestrator_e2e.py.log

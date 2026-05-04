@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-    CloudScape Nexus 5.2 - Soft Reset Utility
+    CloudScape Core 5.2 - Soft Reset Utility
 
 .DESCRIPTION
-    Performs a graceful teardown of the CloudScape Nexus ecosystem.
+    Performs a graceful teardown of the CloudScape Core ecosystem.
     Features:
     - Gracefully stops all active Docker containers without data destruction.
     - Flushes Redis volatile memory arrays.
@@ -44,7 +44,7 @@ function Write-OutputBox {
 }
 
 Write-Host "=================================================" -ForegroundColor Magenta
-Write-Host " CLOUDSCAPE NEXUS - SOFT RESET INITIATED " -ForegroundColor Magenta
+Write-Host " CLOUDSCAPE CORE - SOFT RESET INITIATED " -ForegroundColor Magenta
 Write-Host "=================================================" -ForegroundColor Magenta
 
 try {

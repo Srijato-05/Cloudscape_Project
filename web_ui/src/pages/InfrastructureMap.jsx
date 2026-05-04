@@ -101,12 +101,12 @@ export default function InfrastructureMap() {
   }, [setGraph]);
 
   return (
-    <div style={{ padding: '0 20px 20px 20px', height: '100%', position: 'relative' }}>
+    <div className="map-page-root">
       <Header variant="h1" description={`Live 3D topology map of ${nodes.length} nodes · Hybrid Convergence Bridge`}>
         Multi-Cloud Infrastructure Topology
       </Header>
       
-      <div className="canvas-container" style={{ marginTop: '20px', position: 'relative' }}>
+      <div className="canvas-container" style={{ marginTop: '16px', position: 'relative', flex: 1, minHeight: 0 }}>
         <Graph3D nodes={nodes} edges={edges} />
         <MapLegend nodeCount={Math.min(nodes.length, 500)} edgeCount={edges.length} />
       </div>

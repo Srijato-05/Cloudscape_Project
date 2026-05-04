@@ -1,20 +1,21 @@
 # ==============================================================================
-# CLOUDSCAPE NEXUS 5.0 (AETHER) - ENTERPRISE INFRASTRUCTURE MESH
+# CLOUDSCAPE CORE 5.2 - ENTERPRISE INFRASTRUCTURE MESH (ULTIMATELY ADVANCED)
 # ==============================================================================
-# Compose V2 Specification (Obsolete 'version' tag removed)
+# Compose V2 Specification
 # Provisions the Graph Intelligence Database, State Differentials Cache, 
 # and the Multi-Cloud API Simulators (Standard LocalStack & Azurite).
+# Optimized for high-throughput synthetic topology generation (100k+ nodes).
 # ==============================================================================
 
 x-logging: &default-logging
   driver: "json-file"
   options:
-    max-size: "20m"
-    max-file: "3"
+    max-size: "50m"
+    max-file: "5"
 
 services:
   # ------------------------------------------------------------------------------
-  # 1. NEO4J GRAPH INTELLIGENCE ENGINE (GDS + APOC)
+  # 1. NEO4J GRAPH INTELLIGENCE ENGINE (GDS + APOC ENTERPRISE)
   # ------------------------------------------------------------------------------
   neo4j-gds:
     image: neo4j:5.17.0-enterprise
@@ -41,7 +42,7 @@ services:
       - NEO4J_apoc_import_file_enabled=true
       - NEO4J_apoc_import_file_use__neo4j__config=true
       
-      # JVM Memory Tuning (Critical for 100,000+ synthetic nodes)
+      # JVM Memory Tuning (High Performance for topological mutations)
       - NEO4J_dbms_memory_heap_initial__size=${NEO4J_HEAP_INITIAL:-2G}
       - NEO4J_dbms_memory_heap_max__size=${NEO4J_HEAP_MAX:-4G}
       - NEO4J_dbms_memory_pagecache_size=${NEO4J_PAGECACHE:-1G}
@@ -66,7 +67,7 @@ services:
     logging: *default-logging
 
   # ------------------------------------------------------------------------------
-  # 2. REDIS STATE DIFFERENTIAL CACHE
+  # 2. REDIS STATE DIFFERENTIAL CACHE (LUA HARDENED)
   # ------------------------------------------------------------------------------
   redis-cache:
     image: redis:7.2-alpine
@@ -92,10 +93,8 @@ services:
     logging: *default-logging
 
   # ------------------------------------------------------------------------------
-  # 3. LOCALSTACK STANDARD (AWS API SIMULATOR)
+  # 3. LOCALSTACK STANDARD (AWS API SIMULATOR V3)
   # ------------------------------------------------------------------------------
-  # [AETHER FIX] Reverted to standard image to prevent Pro module crashes.
-  # Explicitly loading only the services required by the Discovery Engine.
   localstack-aws:
     image: localstack/localstack:latest
     container_name: cloudscape_localstack_aws
@@ -108,8 +107,8 @@ services:
       # Explicit Service Boot to preserve RAM and eliminate socket drops
       - SERVICES=iam,s3,ec2,rds,sts
       - DEBUG=${DEBUG:-0}
-      - ENFORCE_IAM=0          # Disabled strict IAM validation for local mock discovery
-      - PERSISTENCE=0          # Disabled to keep container completely ephemeral and fast
+      - ENFORCE_IAM=1          # Enabled for high-fidelity simulation
+      - PERSISTENCE=1          # Enabled for forensic timeline data
       - DOCKER_HOST=unix:///var/run/docker.sock
       - AWS_DEFAULT_REGION=us-east-1
     volumes:
@@ -126,9 +125,8 @@ services:
     logging: *default-logging
 
   # ------------------------------------------------------------------------------
-  # 4. AZURITE (AZURE STORAGE SIMULATOR)
+  # 4. AZURITE (AZURE STORAGE SIMULATOR - VERSION ABSTRACTION)
   # ------------------------------------------------------------------------------
-  # [AETHER FIX] Injected --skipApiVersionCheck to bypass SDK version drifting.
   azurite-azure:
     image: mcr.microsoft.com/azure-storage/azurite:latest
     container_name: cloudscape_azurite_azure
@@ -141,7 +139,6 @@ services:
       - "10002:10002" # Table Service
     environment:
       - AZURE_DISABLE_TELEMETRY=1
-      - AZURE_TELEMETRY_DISABLED=1
     volumes:
       - ./volume/azure_data:/data
     networks:
@@ -153,8 +150,35 @@ services:
       retries: 3
     logging: *default-logging
 
+  # ------------------------------------------------------------------------------
+  # 5. CORE ORCHESTRATOR (BACKEND - FORENSIC MODE)
+  # ------------------------------------------------------------------------------
+  core-orchestrator:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: cloudscape_core_orchestrator
+    depends_on:
+      neo4j-gds:
+        condition: service_healthy
+      redis-cache:
+        condition: service_healthy
+    environment:
+      - NEO4J_URI=bolt://neo4j-engine:7687
+      - REDIS_URL=redis://redis-cache:6379/0
+      - AWS_ENDPOINT_URL=http://localstack-aws:4566
+      - ENVIRONMENT=local_simulation
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./backend/config:/app/config:ro
+      - ./backend/data:/app/data
+      - ./forensics:/app/forensics
+    networks:
+      - cloudscape_mesh
+    logging: *default-logging
+
 # ==============================================================================
-# ISOLATED NETWORK TOPOLOGY
+# ISOLATED NETWORK TOPOLOGY (HIGH-FIDELITY SEGMENTATION)
 # ==============================================================================
 networks:
   cloudscape_mesh:

@@ -151,6 +151,143 @@ class EnterpriseCorrelationEngine:
 
         return cross_links
 
+    def analyze_s3_trusts(self, source_tenant: TenantConfig, raw_state: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        [SIMPLE] Analyzes S3 Bucket Policies for cross-account or public data exposure.
+        """
+        cross_links = []
+        buckets = raw_state.get("Storage", {}).get("S3Buckets", [])
+
+        for bucket in buckets:
+            bucket_arn = bucket.get("Arn")
+            policy_str = bucket.get("Policy")
+            
+            if not policy_str:
+                continue
+                
+            try:
+                if isinstance(policy_str, str):
+                    from urllib.parse import unquote
+                    policy = json.loads(unquote(policy_str))
+                else:
+                    policy = policy_str
+
+                statements = policy.get("Statement", [])
+                if isinstance(statements, dict):
+                    statements = [statements]
+
+                for stmt in statements:
+                    if stmt.get("Effect") == "Allow":
+                        principals = stmt.get("Principal", {})
+                        
+                        aws_principals = principals.get("AWS", []) if isinstance(principals, dict) else principals
+                        if isinstance(aws_principals, str):
+                            aws_principals = [aws_principals]
+
+                        for principal in aws_principals:
+                            if principal == "*":
+                                cross_links.append({
+                                    "source_node": "GLOBAL_INTERNET",
+                                    "target_node": bucket_arn,
+                                    "relationship": "CAN_READ_DATA" if "Get" in str(stmt.get("Action")) else "CAN_WRITE_DATA",
+                                    "metadata": {"risk": "CRITICAL", "reason": "Public S3 Bucket Policy"}
+                                })
+                                continue
+
+                            parsed_principal = self._parse_arn(principal)
+                            if parsed_principal and parsed_principal["account_id"] != source_tenant.account_id:
+                                target_project_id = self.account_to_tenant_map.get(parsed_principal["account_id"], "EXTERNAL_UNKNOWN")
+                                cross_links.append({
+                                    "source_node": principal,
+                                    "target_node": bucket_arn,
+                                    "relationship": "CROSS_ACCOUNT_DATA_ACCESS",
+                                    "metadata": {
+                                        "source_project": target_project_id,
+                                        "target_project": source_tenant.id,
+                                        "is_internal_mesh": target_project_id != "EXTERNAL_UNKNOWN"
+                                    }
+                                })
+
+            except Exception as e:
+                logger.error(f"[{source_tenant.id}] Failed to parse S3 Policy for {bucket.get('Name')}: {e}")
+
+        return cross_links
+
+    def analyze_tgw_bridges(self, source_tenant: TenantConfig, raw_state: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        [ADVANCED] Analyzes AWS Transit Gateway (TGW) attachments to find hub-and-spoke lateral movement paths.
+        """
+        cross_links = []
+        tgw_attachments = raw_state.get("Network", {}).get("TransitGatewayAttachments", [])
+
+        for att in tgw_attachments:
+            if att.get("State") != "available":
+                continue
+
+            tgw_owner = att.get("TransitGatewayOwnerId")
+            resource_owner = att.get("ResourceOwnerId")
+            resource_id = att.get("ResourceId")
+            tgw_arn = f"arn:aws:ec2:{source_tenant.region}:{tgw_owner}:transit-gateway/{att.get('TransitGatewayId')}"
+
+            # We focus on cross-account attachments
+            if tgw_owner != resource_owner:
+                req_project = self.account_to_tenant_map.get(resource_owner, "EXTERNAL_UNKNOWN")
+                tgw_project = self.account_to_tenant_map.get(tgw_owner, "EXTERNAL_UNKNOWN")
+
+                cross_links.append({
+                    "source_node": f"vpc-{resource_id}" if att.get("ResourceType") == "vpc" else resource_id,
+                    "target_node": tgw_arn,
+                    "relationship": "ATTACHED_TO_TGW",
+                    "metadata": {
+                        "source_project": req_project,
+                        "target_project": tgw_project,
+                        "is_internal_mesh": req_project != "EXTERNAL_UNKNOWN" and tgw_project != "EXTERNAL_UNKNOWN"
+                    }
+                })
+
+        return cross_links
+
+    def analyze_ram_shares(self, source_tenant: TenantConfig, raw_state: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        [EXTREME] Analyzes AWS Resource Access Manager (RAM) to detect implicitly shared subnets, 
+        allowing container breakout across tenant boundaries.
+        """
+        cross_links = []
+        ram_shares = raw_state.get("Network", {}).get("ResourceShares", [])
+
+        for share in ram_shares:
+            if share.get("status") != "ACTIVE":
+                continue
+
+            owner = share.get("owningAccountId")
+            
+            # This is a simplification of the payload, assuming 'principals' and 'resources' are lists of ARNs
+            principals = share.get("principals", [])
+            resources = share.get("resources", [])
+
+            for principal in principals:
+                parsed_principal = self._parse_arn(principal)
+                target_account = parsed_principal["account_id"] if parsed_principal else principal
+                
+                if target_account != owner:
+                    req_project = self.account_to_tenant_map.get(target_account, "EXTERNAL_UNKNOWN")
+                    owner_project = self.account_to_tenant_map.get(owner, "EXTERNAL_UNKNOWN")
+
+                    for resource in resources:
+                        cross_links.append({
+                            "source_node": principal,
+                            "target_node": resource,
+                            "relationship": "RAM_SHARED_SUBNET",
+                            "metadata": {
+                                "source_project": req_project,
+                                "target_project": owner_project,
+                                "risk": "CRITICAL",
+                                "reason": "Subnet shared via RAM enables implicit container migration"
+                            }
+                        })
+
+        return cross_links
+
     def extract_mesh_edges(self, source_tenant: TenantConfig, raw_state: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
         The Master Execution function for this module.
@@ -161,6 +298,9 @@ class EnterpriseCorrelationEngine:
         all_edges = []
         all_edges.extend(self.analyze_iam_trusts(source_tenant, raw_state))
         all_edges.extend(self.analyze_network_bridges(source_tenant, raw_state))
+        all_edges.extend(self.analyze_s3_trusts(source_tenant, raw_state))
+        all_edges.extend(self.analyze_tgw_bridges(source_tenant, raw_state))
+        all_edges.extend(self.analyze_ram_shares(source_tenant, raw_state))
         
         internal_links = len([e for e in all_edges if e.get("metadata", {}).get("is_internal_mesh")])
         external_links = len(all_edges) - internal_links

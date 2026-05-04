@@ -35,7 +35,7 @@ if (Test-Path "registry/aws_services.json") { Move-Item -Force "registry/aws_ser
 
 # Move scripts
 if (Test-Path "utils/soft_reset.py") { Move-Item -Force "utils/soft_reset.py" "backend/scripts/" }
-if (Test-Path "scripts/titan_preflight.py") { Move-Item -Force "scripts/titan_preflight.py" "backend/scripts/" -ErrorAction SilentlyContinue }
+if (Test-Path "scripts/Cloudscape_preflight.py") { Move-Item -Force "scripts/Cloudscape_preflight.py" "backend/scripts/" -ErrorAction SilentlyContinue }
 if (Test-Path "scripts/check_mesh.py") { Move-Item -Force "scripts/check_mesh.py" "backend/scripts/" -ErrorAction SilentlyContinue }
 if (Test-Path "scripts/audit.py") { Move-Item -Force "scripts/audit.py" "backend/scripts/" -ErrorAction SilentlyContinue }
 

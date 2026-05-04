@@ -8,7 +8,7 @@ from typing import Optional, Dict, Any
 from datetime import datetime, timezone
 
 # ==============================================================================
-# CLOUDSCAPE NEXUS 5.2 TITAN - ENTERPRISE LOGGING MODULE
+# CLOUDSCAPE CORE 5.2 CLOUDSCAPE - ENTERPRISE LOGGING MODULE
 # ==============================================================================
 # Centralized logging configuration for the entire CloudScape pipeline.
 # Provides colored console output, rotating file handlers, and structured

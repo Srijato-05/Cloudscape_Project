@@ -1,9 +1,9 @@
 ﻿<#
 .SYNOPSIS
-    CloudScape Nexus 5.2 - Supreme Launch Orchestrator
+    CloudScape Core 5.2 - Supreme Launch Orchestrator
 
 .DESCRIPTION
-    Highly advanced, robust launcher for the CloudScape Sovereign-Forensic Mesh.
+    Highly advanced, robust launcher for the CloudScape Enterprise Mesh.
     Provides complete lifecycle management including:
     - Pre-flight dependency validation (Python, Docker, Docker Compose)
     - Dynamic Virtual Environment provisioning & parity checking
@@ -27,7 +27,7 @@
 
 .EXAMPLE
     .\launch_nexus.ps1
-    Starts the Nexus in default MOCK mode.
+    Starts the Core in default MOCK mode.
 
 .EXAMPLE
     .\launch_nexus.ps1 -RunMode LIVE -ForceRebuild
@@ -49,7 +49,7 @@ $VerbosePreference = if ($VerboseUI) { "Continue" } else { "SilentlyContinue" }
 # ==============================================================================
 # GLOBAL CONSTANTS & CONFIGURATION
 # ==============================================================================
-$Global:AppTitle = "CloudScape Nexus 5.2 Titan"
+$Global:AppTitle = "CloudScape Core 5.2 Cloudscape"
 $Global:LogDirectory = Join-Path $PSScriptRoot "..\forensics\logs"
 $Global:LogFile = Join-Path $Global:LogDirectory "nexus_launcher_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
 $Global:RootDir = (Get-Item $PSScriptRoot).Parent.FullName
@@ -130,7 +130,7 @@ function Show-Header {
     Write-Host " ╠══                               " -ForegroundColor $Border -NoNewline
     Write-Host "║" -ForegroundColor $Border
     Write-Host "  ║" -ForegroundColor $Border -NoNewline
-    Write-Host "              Sovereign-Forensic Multi-Cloud Intelligence Mesh                    " -ForegroundColor $TagColor -NoNewline
+    Write-Host "              Enterprise Multi-Cloud Intelligence Mesh                    " -ForegroundColor $TagColor -NoNewline
     Write-Host "║" -ForegroundColor $Border
     Write-Host "  ║                                                                                        ║" -ForegroundColor $Border
     Write-Host "  ╚════════════════════════════════════════════════════════════════════════════════════════╝" -ForegroundColor $Border

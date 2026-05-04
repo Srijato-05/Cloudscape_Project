@@ -319,6 +319,7 @@ export default function Graph3D({ nodes, edges }) {
 
   return (
     <Canvas
+      style={{ width: '100%', height: '100%', display: 'block' }}
       camera={{ position: [0, 0, 40], fov: 60 }}
       gl={{ antialias: false, powerPreference: 'high-performance', toneMapping: THREE.NoToneMapping }}
       dpr={[1, 1.5]}

@@ -18,13 +18,13 @@ from neo4j import AsyncGraphDatabase, exceptions
 from core.config import config
 
 # ==============================================================================
-# CLOUDSCAPE NEXUS 5.2 TITAN - ENTERPRISE GRAPH DATABASE MAINTENANCE UTILITY
+# CLOUDSCAPE CORE 5.2 CLOUDSCAPE - ENTERPRISE GRAPH DATABASE MAINTENANCE UTILITY
 # ==============================================================================
 # Standalone administrative tool for managing Neo4j schema states, executing 
 # batch-safe database purges, running Garbage Collection on orphaned 
 # infrastructure nodes, and performing deep graph analytics.
 #
-# TITAN NEXUS 5.2 UPGRADES ACTIVE:
+# CLOUDSCAPE CORE 5.2 UPGRADES ACTIVE:
 # 1. FIXED ATTRIBUTE ACCESS: Uses `neo4j_uri` (canonical Pydantic field name)
 #    instead of `uri` which caused AttributeError crashes.
 # 2. BATCH-SAFE PURGE: Uses APOC periodic iterate for OOM-safe deletion.
@@ -698,7 +698,7 @@ class GraphMaintenanceManager:
 
 async def main():
     parser = argparse.ArgumentParser(
-        description="CloudScape Nexus 5.2 — Enterprise Graph Database Admin Tool",
+        description="CloudScape Core 5.2 — Enterprise Graph Database Admin Tool",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

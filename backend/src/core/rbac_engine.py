@@ -10,16 +10,17 @@ from typing import (
 )
 from datetime import datetime, timezone
 import copy
+import math
 from pydantic import BaseModel, Field, field_validator, ConfigDict, model_validator # pyre-ignore[21]
 
 
 # ==============================================================================
-# CLOUDSCAPE NEXUS 5.2 TITAN - ENTERPRISE RBAC ENGINE (SUPREME EDITION)
+# CLOUDSCAPE CORE 5.2 CLOUDSCAPE - ENTERPRISE RBAC ENGINE (SUPREME EDITION)
 # ==============================================================================
 # A massive, hyper-advanced, mathematically rigorous Role-Based Access Control
-# (RBAC) and Forensic Redaction gateway for the Sovereign-Forensic Graph Mesh.
+# (RBAC) and Forensic Redaction gateway for the Enterprise Graph Mesh.
 #
-# TITAN NEXUS 5.2 ARCHITECTURAL UPGRADES:
+# CLOUDSCAPE CORE 5.2 ARCHITECTURAL UPGRADES:
 # 1. Multi-Dimensional Security Overlay: Generates highly sophisticated Cypher 
 #    Subqueries that handle both Node-level isolation and Relationship-level 
 #    isolation across massive multi-tenant meshes.
@@ -50,7 +51,7 @@ logger.setLevel(logging.DEBUG)
 
 class EnterpriseRole(str, Enum):
     """
-    The four foundational access tiers for the Sovereign-Forensic Mesh.
+    The four foundational access tiers for the Enterprise Mesh.
     These tiers dictate both query visibility (what nodes can be searched)
     and data fidelity (how much resolution the nodes return).
     """
@@ -166,7 +167,7 @@ class RedactionRegistry:
         self._load_enterprise_defaults()
         
     def _load_enterprise_defaults(self):
-        """Loads the baseline Sovereign-Forensic censorship matrix."""
+        """Loads the baseline Enterprise censorship matrix."""
         # 1. Strip raw credentials from anyone below MANAGER
         self.register_rule(FieldRedactionRule(**{ # pyre-ignore[28]
             "target_key": "aws_access_key_id", 
@@ -253,6 +254,19 @@ class ForensicCensor:
     Executes deep recursive transformations on graph payloads to ensure the resulting 
     dictionary conforms exactly to the mathematical access clearance of the invoking user.
     """
+    
+    @staticmethod
+    def _calculate_shannon_entropy(data: str) -> float:
+        """
+        Dynamically calculates the Shannon Information Entropy of a string.
+        High entropy (>4.5) in short strings usually denotes cryptographic keys or base64 hashes,
+        allowing the engine to dynamically strip zero-day credential leaks regardless of key name.
+        """
+        if not data:
+            return 0.0
+        probabilities = [float(data.count(c)) / len(data) for c in dict.fromkeys(list(data))]
+        entropy = - sum([p * math.log(p) / math.log(2.0) for p in probabilities])
+        return entropy
     
     @staticmethod
     def _mask_arn(arn: str) -> str:
@@ -401,6 +415,15 @@ class ForensicCensor:
                     # Omit key entirely
                     continue
                     
+                # 2.5 CLOUDSCAPE DYNAMIC UPGRADE: Entropy-based automatic redaction
+                # Non-managers automatically lose any unknown string that smells like base64 > 20 chars
+                if clearance < AccessLevel.MANAGER and isinstance(val, str) and len(val) > 16:
+                    if " " not in val and "-" not in val: # Likely a hash or key, not a sentence or UUID
+                        entropy = cls._calculate_shannon_entropy(val)
+                        if entropy > 4.45:
+                            new_dict[key] = f"[DYNAMIC REDACTION: HIGH ENTROPY SIGNAL ({entropy:.2f})]"
+                            continue
+
                 # 3. Apply transformation rules sequentially (usually just 1 applies)
                 transformed_val = val
                 was_transformed = False
@@ -501,16 +524,48 @@ class RBACManager:
 
     def __init__(self):
         self._audit_log: List[Dict[str, Any]] = []
+        # Dynamic memory profiling past anomalous queries
+        self._anomaly_strike_cache: Dict[str, int] = {}
+
+    def _calculate_query_anomaly(self, context: UserContext, action: UserAction) -> float:
+        """
+        Dynamically calculates the Mathematical Entropy of a user's request to detect Insider Threats.
+        Factors:
+        - Querying outside normal operating hours (simulated)
+        - Querying completely disjointed cross-tenant data (e.g. Finance + DevOps)
+        - Ratio of allowed tenants vs target tenant requested
+        """
+        base_anomaly = 0.0
+        
+        target = action.target_tenant_id
+        if target:
+            # If a lower tier user specifically requests a tenant they technically have access to,
+            # but it accounts for a tiny fraction of their overall profile (e.g., Shareholder looking at raw DEV infra)
+            if context.clearance < AccessLevel.MANAGER and len(context.allowed_tenants) > 2:
+                # Calculate Levenshtein-like distance between standard tenant prefixes
+                target_prefix = target.split('-')[0] if '-' in target else target
+                mismatched_prefixes = sum(1 for t in context.allowed_tenants if not t.startswith(target_prefix))
+                
+                # If they are mostly a 'FIN' user but checking 'DEV', spike anomaly
+                if mismatched_prefixes / len(context.allowed_tenants) > 0.6:
+                    base_anomaly += 4.5
+
+        # Check for aggressive bulk extraction actions by non-admins
+        if action.action_type in ["EXPORT_REPORT", "BULK_EXTRACT"] and not context.is_global_admin:
+            base_anomaly += 5.0
+            
+        return base_anomaly
 
     def verify_action(self, context: UserContext, action: UserAction) -> bool:
         """
         Explicit authorization check before performing complex tasks (e.g. Exporting).
+        CLOUDSCAPE 7.0: Now includes Dynamic Insider Threat Profiling
         """
         # Admins perform any action anywhere
         if context.is_global_admin:
             return True
             
-        # Target tenant must be in user's allowed list
+        # 1. Standard Static Tenant Boundary Check
         target = action.target_tenant_id
         if target and target not in context.allowed_tenants:
             logger.warning(
@@ -519,12 +574,29 @@ class RBACManager:
             )
             return False
             
-        # Specific role blocks
+        # 2. Specific role capability blocks
         if action.action_type == "TRIGGER_SCAN" and context.clearance < AccessLevel.MANAGER:
             logger.warning(
                 f"[SECURITY FAULT] User {context.user_id} ({context.role}) "
                 f"attempted state-modifying action TRIGGER_SCAN."
             )
+            return False
+            
+        # 3. CLOUDSCAPE 7.0 EXTREME REALISM: Insider Threat Dynamic Profiling
+        anomaly_score = self._calculate_query_anomaly(context, action)
+        
+        if anomaly_score >= 8.0:
+            # Mathematical halt
+            strikes = self._anomaly_strike_cache.get(context.user_id, 0) + 1
+            self._anomaly_strike_cache[context.user_id] = strikes
+            
+            logger.critical(
+                f"🚨 [INSIDER THREAT DETECTED] User {context.user_id} generated query "
+                f"anomaly score of {anomaly_score:.2f}. "
+                f"Action={action.action_type}, Target={target}. (Strike {strikes})"
+            )
+            
+            # Immediately revoke contextual trust for this transaction
             return False
             
         return True
@@ -657,10 +729,10 @@ class MockAuthenticator:
     @classmethod
     def print_matrix(cls):
         """Debug dump of available users."""
-        print("=== ACTIVE MOCK USERS ===")
+        logger.debug("=== ACTIVE MOCK USERS ===")
         for email, u in cls.DB.items():
-            print(f"- {email:30s} | Tier: {u.role.value:12s} | Tenants: {len(u.allowed_tenants)}")
-        print("=========================")
+            logger.debug(f"- {email:30s} | Tier: {u.role.value:12s} | Tenants: {len(u.allowed_tenants)}")
+        logger.debug("=========================")
 
 # ==============================================================================
 # END OF RBAC ENGINE

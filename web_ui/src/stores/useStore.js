@@ -25,13 +25,13 @@ const useStore = create((set) => ({
   addEvent: (event) => set((state) => {
     if (event.type === 'drift:detected') {
       return { 
-        driftEvents: [event.payload, ...state.driftEvents].slice(0, 100),
+        driftEvents: [event.payload, ...state.driftEvents],
         metrics: { ...state.metrics, driftCount: state.metrics.driftCount + 1 }
       };
     }
     if (event.type === 'alert:security') {
       return { 
-        securityEvents: [event.payload, ...state.securityEvents].slice(0, 100),
+        securityEvents: [event.payload, ...state.securityEvents],
         metrics: { ...state.metrics, alertCount: state.metrics.alertCount + 1 }
       };
     }

@@ -7,7 +7,7 @@ import boto3
 from pathlib import Path
 
 # ==============================================================================
-# CLOUDSCAPE NEXUS 5.0 - VISIBILITY DEBUGGER (D2H PROBE)
+# CLOUDSCAPE CORE 5.0 - VISIBILITY DEBUGGER (D2H PROBE)
 # ==============================================================================
 # Bypasses the Orchestrator to perform direct-to-emulator telemetry probing.
 # Used to isolate environment-level blindspots from logic-level filters.
